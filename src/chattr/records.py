@@ -114,3 +114,39 @@ def assign_ids(
             message_id = f"{conversation.id}:{_digest(key, occurrence)[:24]}"
         result.append(replace(record, id=message_id, content_hash=content_hash(record)))
     return result
+
+
+#: How the older parsers' `type` values map to the unified content types.
+_LEGACY_TYPES = {"text": "text", "image": "media", "video": "media", "gallery": "media"}
+
+
+def records_from_parser(
+    messages: list[dict[str, Any]], owner: Optional[str] = None
+) -> list[MessageRecord]:
+    """Convert the dicts today's WhatsApp/Messenger parsers return into MessageRecords.
+
+    Those parsers give `timestamp` (naive local time), `author`, `message` and `type`, plus
+    optional `attachment_path` and `shared_link`. Naive times are marked `tz_assumed`.
+    """
+    records = []
+    for message in messages:
+        timestamp = message["timestamp"]
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        author = message.get("author")
+        extras = {
+            key: message[key] for key in ("attachment_path", "shared_link") if message.get(key)
+        }
+        records.append(
+            MessageRecord(
+                timestamp=timestamp,
+                sender=author,
+                sender_name=author,
+                body=message.get("message"),
+                content_type=_LEGACY_TYPES.get(message.get("type") or "text", "text"),
+                is_from_owner=bool(owner) and author == owner,
+                tz_assumed=timestamp.tzinfo is None,
+                service_specific=extras,
+            )
+        )
+    return records
