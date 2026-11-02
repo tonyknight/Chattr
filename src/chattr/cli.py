@@ -56,10 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument(
         "service",
         type=str.lower,
-        choices=["whatsapp", "messenger", "instagram", "imessage", "mail"],
+        choices=["whatsapp", "messenger", "instagram", "imessage", "mail", "googlevoice"],
     )
     convert.add_argument(
-        "export", nargs="?", help="the export file (for iMessage, chat.db; default: configured)"
+        "export",
+        nargs="?",
+        help="the export file (iMessage: chat.db, default: configured; Google Voice: the folder)",
     )
     route = convert.add_mutually_exclusive_group()
     route.add_argument(
@@ -250,6 +252,7 @@ SERVICE_CHOICES = (
     ("instagram", "Instagram"),
     ("imessage", "iMessage"),
     ("mail", "Mail (MBOX)"),
+    ("googlevoice", "Google Voice (Takeout folder)"),
 )
 IMESSAGE_TOOLS = (
     "List chats",
@@ -313,9 +316,11 @@ def _menu_convert(settings: Settings) -> None:
     if key == "imessage":
         _menu_convert_imessage(settings)
         return
-    export = _ask_path(f"Path to the {name} export file")
-    if not export or not Path(export).is_file():
-        print(f"❌ Export file not found: {export or '(none given)'}")
+    folder = key in commands.FOLDER_SERVICES
+    export = _ask_path(f"Path to the {name} export {'folder' if folder else 'file'}")
+    found = Path(export).is_dir() if folder else Path(export).is_file()
+    if not export or not found:
+        print(f"❌ Export {'folder' if folder else 'file'} not found: {export or '(none given)'}")
         return
     destinations = (
         "The central archive (Database/chattr.sqlite)",

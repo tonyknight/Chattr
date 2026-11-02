@@ -28,6 +28,7 @@ from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
+from chattr.parsers.google_voice_parser import GoogleVoiceParser
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
 from chattr.parsers.imessage_parser import IMessageParser
 from chattr.parsers.mbox_parser import MboxParser
@@ -42,7 +43,14 @@ SERVICES: dict[str, tuple[str, Any]] = {
     "messenger": ("Messenger", MessengerParser),
     "instagram": ("Instagram", InstagramParser),
     "mail": ("Mail", MboxParser),
+    "googlevoice": ("Google Voice", GoogleVoiceParser),
 }
+
+#: Services whose export is a folder, not a single file.
+FOLDER_SERVICES = {"googlevoice"}
+
+#: Services whose parsers return one batch per conversation (and keep attachments by hash).
+BATCH_SERVICES = {"mail", "googlevoice"}
 
 #: Output folder for each service (matches preflight's `Output/` tree).
 OUTPUT_FOLDERS = {
@@ -51,6 +59,7 @@ OUTPUT_FOLDERS = {
     "instagram": "Instagram",
     "imessage": "iMessage",
     "mail": "Mail",
+    "googlevoice": "GoogleVoice",
 }
 
 #: Name of the HTML page for the whole central archive (Chattr's earlier name for it).
@@ -144,8 +153,9 @@ def _write_batch_pages(
     return first
 
 
-def _convert_mail(
+def _convert_batches(
     settings: Settings,
+    key: str,
     export: Path,
     route: str,
     html: bool,
@@ -153,31 +163,36 @@ def _convert_mail(
     aliases: Optional[PathLike],
     attachments_dir: Optional[PathLike],
 ) -> ConvertResult:
-    """Import an MBOX: one conversation per mail thread; attachments are kept by hash."""
-    folder = output_folder(settings, OUTPUT_FOLDERS["mail"])
-    parser = MboxParser(
+    """Import a service whose parser returns one batch per conversation (mail, Google Voice).
+
+    Attachments extracted from the export (mail attachments, voicemail audio) are kept by hash in
+    `attachments_dir`, by default `<root>/Output/<Service>/Attachments`.
+    """
+    name, parser_class = SERVICES[key]
+    folder = output_folder(settings, OUTPUT_FOLDERS[key])
+    parser = parser_class(
         owner=owner,
         aliases=_aliases_mapping(aliases),
         attachments_dir=attachments_dir or folder / "Attachments",
     )
     batches = parser.parse(export)
     if not batches:
-        raise CommandError(f"No mail found in {export}")
+        raise CommandError(f"No {name} items found in {export}")
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
-            counts = import_conversations(db, settings, "Mail", export, batches)
+            counts = import_conversations(db, settings, name, export, batches)
             html_path = (
                 _write_batch_pages(db, batches, output_folder(settings, "Chattr"), owner)
                 if html
                 else None
             )
-        return ConvertResult("Mail", counts, html_path=html_path)
+        return ConvertResult(name, counts, html_path=html_path)
     with DatabaseManager(":memory:") as db:
-        counts = import_conversations(db, None, "Mail", export, batches)
-        json_path = folder / f"{export.stem}.json"
-        db.export_json("Mail", json_path)
+        counts = import_conversations(db, None, name, export, batches)
+        json_path = folder / f"{export.stem if export.is_file() else OUTPUT_FOLDERS[key]}.json"
+        db.export_json(name, json_path)
         html_path = _write_batch_pages(db, batches, folder, owner) if html else None
-    return ConvertResult("Mail", counts, json_path=json_path, html_path=html_path)
+    return ConvertResult(name, counts, json_path=json_path, html_path=html_path)
 
 
 def _media_files(message: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
@@ -232,11 +247,16 @@ def convert(
     if route not in ("central", "service"):
         raise CommandError("Route must be 'central' or 'service'.")
     export = Path(export)
-    if not export.is_file():
+    if key in FOLDER_SERVICES:
+        if not export.exists():
+            raise CommandError(f"Export folder not found: {export}")
+        if not export.is_dir():
+            raise CommandError(f"The {SERVICES[key][0]} export is a folder, not a file: {export}")
+    elif not export.is_file():
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
-    if key == "mail":
-        return _convert_mail(settings, export, route, html, owner, aliases, attachments_dir)
+    if key in BATCH_SERVICES:
+        return _convert_batches(settings, key, export, route, html, owner, aliases, attachments_dir)
     parser = parser_class()
     messages = parser.parse(str(export))
     if not messages:
