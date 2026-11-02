@@ -52,13 +52,13 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import json
 import concurrent.futures
 import threading
 from tqdm import tqdm
 
-from chattr import typedstream
+from chattr import apple_time, typedstream
 
 # Optional dependencies for contact parsing
 try:
@@ -715,13 +715,11 @@ class iMessageDatabaseParser:
 
     @staticmethod
     def _apple_timestamp_to_datetime(timestamp: int) -> datetime:
-        """Convert Apple timestamp to Python datetime"""
-        if timestamp == 0:
-            return datetime.fromtimestamp(0)
+        """Convert an Apple timestamp (seconds or nanoseconds) to an aware UTC datetime.
 
-        # Apple timestamps are nanoseconds since 2001-01-01
-        apple_epoch = datetime(2001, 1, 1)
-        return apple_epoch + timedelta(seconds=timestamp / 1_000_000_000)
+        An unset date (0) becomes the Unix epoch so every message still has a time.
+        """
+        return apple_time.to_utc(timestamp) or datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     def _get_sender_name(self, handle_id: Optional[int], is_from_me: bool) -> str:
         """Get sender name from handle ID with contact enhancement"""

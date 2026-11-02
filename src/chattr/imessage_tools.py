@@ -29,13 +29,12 @@ import hashlib
 import argparse
 import shutil
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 from collections import defaultdict, Counter
 from dataclasses import dataclass, asdict
 
-# Apple's timestamp epoch (January 1, 2001, 00:00:00 UTC)
-APPLE_EPOCH = datetime(2001, 1, 1)
+from chattr import apple_time
 
 
 @dataclass
@@ -93,27 +92,17 @@ class NullMessage:
 
 
 def convert_apple_timestamp(apple_timestamp: Optional[int]) -> Optional[datetime]:
-    """Convert Apple timestamp (nanoseconds since 2001-01-01) to datetime"""
-    if apple_timestamp is None or apple_timestamp == 0:
-        return None
-
+    """Convert an Apple timestamp (seconds or nanoseconds since 2001-01-01 UTC) to aware UTC."""
     try:
-        # Convert nanoseconds to seconds and add to Apple epoch
-        timestamp_seconds = apple_timestamp / 1_000_000_000
-        return APPLE_EPOCH + timedelta(seconds=timestamp_seconds)
+        return apple_time.to_utc(apple_timestamp)
     except (ValueError, OverflowError):
         return None
 
 
 def apple_timestamp_to_datetime(timestamp: int) -> str:
-    """Convert Apple timestamp to ISO format string"""
-    if timestamp == 0:
-        return "1970-01-01T00:00:00"
-
-    # Apple timestamps are nanoseconds since 2001-01-01
-    apple_epoch = datetime(2001, 1, 1)
-    dt = apple_epoch + timedelta(seconds=timestamp / 1_000_000_000)
-    return dt.isoformat()
+    """Convert an Apple timestamp to an ISO 8601 UTC string."""
+    moment = convert_apple_timestamp(timestamp)
+    return moment.isoformat() if moment else "1970-01-01T00:00:00+00:00"
 
 
 def calculate_file_hash(file_path: str) -> Optional[str]:
