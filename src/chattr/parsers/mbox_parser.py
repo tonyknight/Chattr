@@ -253,7 +253,6 @@ class MboxParser(BaseParser):
         extras: dict[str, Any] = {"body_html": html} if html else {}
         attachments = tuple(self._attachments(message))
         source_id = message_id or self._synthetic_id(sender, timestamp, subject, text)
-        headers["message_id"] = message_id
         return MessageRecord(
             timestamp=timestamp,
             sender=sender,

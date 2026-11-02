@@ -54,7 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     convert = sub.add_parser("convert", help="convert one export")
     convert.add_argument(
-        "service", type=str.lower, choices=["whatsapp", "messenger", "instagram", "imessage"]
+        "service",
+        type=str.lower,
+        choices=["whatsapp", "messenger", "instagram", "imessage", "mail"],
     )
     convert.add_argument(
         "export", nargs="?", help="the export file (for iMessage, chat.db; default: configured)"
@@ -247,6 +249,7 @@ SERVICE_CHOICES = (
     ("messenger", "Messenger"),
     ("instagram", "Instagram"),
     ("imessage", "iMessage"),
+    ("mail", "Mail (MBOX)"),
 )
 IMESSAGE_TOOLS = (
     "List chats",

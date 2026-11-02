@@ -1,0 +1,90 @@
+{
+  "header": {
+    "description": "Chattr Mail Service Configuration",
+    "version": "2.0.0",
+    "last_updated": "2025-11-11",
+    "service": "Mail"
+  },
+
+  "preferences": {
+    "parsing": {
+      "encoding": "utf-8",
+      "reverse_chronological": true,
+      "fix_mojibake": true
+    },
+
+    "translation": {
+      "enabled": false,
+      "use_global_ai_translation": true,
+      "skip_similar_messages": true,
+      "time_window_minutes": 5,
+      "similarity_tolerance": 0.2
+    },
+
+    "export": {
+      "json_format": "mail_native",
+      "include_shared_links": true
+    },
+
+    "attachments": {
+      "general": {
+        "process_attachments": true,
+        "enable_deduplication": true,
+        "preserve_originals": true,
+        "max_attachment_workers": 4
+      },
+
+      "conversion": {
+        "enabled": true,
+        "quality": 85,
+        "supported_formats": {
+          "images": [".heic", ".png", ".webp", ".jpg", ".jpeg", ".gif", ".tiff", ".tif", ".bmp"],
+          "videos": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".3gp", ".webm"],
+          "audio": [".m4a", ".caf", ".mp3", ".wav", ".aac", ".flac"]
+        },
+        "conversion_formats": {
+          ".heic": ".jpg",
+          ".png": ".jpg",
+          ".webp": ".jpg",
+          ".caf": ".aac"
+        }
+      },
+
+      "archival_structure": {
+        "directory_pattern": "/Attachments/{service}/{year}/{month_number} - {month_name}/",
+        "naming_format": "({date}) {time} [{id}].{ext}",
+        "create_service_folders": true,
+        "create_date_folders": true
+      }
+    },
+
+    "html_generation": {
+      "template": {
+        "file": "templates/template.html",
+        "theme": "nord",
+        "responsive": true
+      },
+
+      "features": {
+        "calendar_navigation": true,
+        "image_lightbox": true,
+        "search_functionality": false,
+        "message_filtering": false
+      },
+
+      "performance": {
+        "lazy_loading": false,
+        "chunk_large_conversations": false,
+        "max_messages_per_page": 10000
+      }
+    }
+  },
+
+  "state": {
+    "last_import_date": null,
+    "last_export_file": null,
+    "total_messages_imported": 0,
+    "last_successful_export": null
+  }
+}
+

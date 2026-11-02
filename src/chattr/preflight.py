@@ -32,6 +32,7 @@ CHATTR_STRUCTURE = {
         "Chattr",
         "Messenger",
         "Instagram",
+        "Mail",
         "GoogleVoice",
         "Voicemail",
         "WhatsApp",

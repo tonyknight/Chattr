@@ -30,6 +30,7 @@ from chattr.media_archive import archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
 from chattr.parsers.imessage_parser import IMessageParser
+from chattr.parsers.mbox_parser import MboxParser
 from chattr.parsers.messenger_parser import InstagramParser, MessengerParser
 from chattr.parsers.whatsapp_parser import WhatsAppParser
 
@@ -40,6 +41,7 @@ SERVICES: dict[str, tuple[str, Any]] = {
     "whatsapp": ("WhatsApp", WhatsAppParser),
     "messenger": ("Messenger", MessengerParser),
     "instagram": ("Instagram", InstagramParser),
+    "mail": ("Mail", MboxParser),
 }
 
 #: Output folder for each service (matches preflight's `Output/` tree).
@@ -48,6 +50,7 @@ OUTPUT_FOLDERS = {
     "messenger": "Messenger",
     "instagram": "Instagram",
     "imessage": "iMessage",
+    "mail": "Mail",
 }
 
 #: Name of the HTML page for the whole central archive (Chattr's earlier name for it).
@@ -128,6 +131,55 @@ def _file_stem(conversation: ConversationRecord) -> str:
     )
 
 
+def _write_batch_pages(
+    db: DatabaseManager, batches: list[Any], folder: Path, owner: Optional[str]
+) -> Optional[Path]:
+    """One HTML page per conversation; returns the first page written."""
+    first = None
+    for batch in batches:
+        page = _write_conversation_html(
+            db, batch.conversation.id, _file_stem(batch.conversation), folder, owner
+        )
+        first = first or page
+    return first
+
+
+def _convert_mail(
+    settings: Settings,
+    export: Path,
+    route: str,
+    html: bool,
+    owner: Optional[str],
+    aliases: Optional[PathLike],
+    attachments_dir: Optional[PathLike],
+) -> ConvertResult:
+    """Import an MBOX: one conversation per mail thread; attachments are kept by hash."""
+    folder = output_folder(settings, OUTPUT_FOLDERS["mail"])
+    parser = MboxParser(
+        owner=owner,
+        aliases=_aliases_mapping(aliases),
+        attachments_dir=attachments_dir or folder / "Attachments",
+    )
+    batches = parser.parse(export)
+    if not batches:
+        raise CommandError(f"No mail found in {export}")
+    if route == "central":
+        with DatabaseManager(central_database(settings)) as db:
+            counts = import_conversations(db, settings, "Mail", export, batches)
+            html_path = (
+                _write_batch_pages(db, batches, output_folder(settings, "Chattr"), owner)
+                if html
+                else None
+            )
+        return ConvertResult("Mail", counts, html_path=html_path)
+    with DatabaseManager(":memory:") as db:
+        counts = import_conversations(db, None, "Mail", export, batches)
+        json_path = folder / f"{export.stem}.json"
+        db.export_json("Mail", json_path)
+        html_path = _write_batch_pages(db, batches, folder, owner) if html else None
+    return ConvertResult("Mail", counts, json_path=json_path, html_path=html_path)
+
+
 def _media_files(message: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     """The files a parsed message carries, each with the dict that should record where it went."""
     if message.get("attachments"):
@@ -183,6 +235,8 @@ def convert(
     if not export.is_file():
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
+    if key == "mail":
+        return _convert_mail(settings, export, route, html, owner, aliases, attachments_dir)
     parser = parser_class()
     messages = parser.parse(str(export))
     if not messages:
@@ -436,16 +490,9 @@ def _import_imessage(
     with DatabaseManager(central_database(settings)) as db:
         counts = import_conversations(db, settings, "iMessage", db_path, batches)
         if html:
-            folder = output_folder(settings, "Chattr")
-            for batch in batches:
-                page = _write_conversation_html(
-                    db,
-                    batch.conversation.id,
-                    _file_stem(batch.conversation),
-                    folder,
-                    parser.owner,
-                )
-                html_path = html_path or page
+            html_path = _write_batch_pages(
+                db, batches, output_folder(settings, "Chattr"), parser.owner
+            )
     return ConvertResult("iMessage", counts, html_path=html_path)
 
 

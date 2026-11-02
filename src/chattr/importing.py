@@ -16,6 +16,7 @@ STATE_KEYS = {
     "facebook messenger": "messenger",
     "messenger": "messenger",
     "instagram": "instagram",
+    "mail": "mail",
     "imessage": "imessage",
     "google voice": "googlevoice",
     "voicemail": "voicemail",

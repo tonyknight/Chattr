@@ -201,3 +201,13 @@ def test_a_bad_database_in_the_tools_is_reported_and_the_menu_continues(
     assert _menu(chattr_root, monkeypatch, ["3", "1", str(not_a_db), "5", EXIT]) == 0
     out = capsys.readouterr().out
     assert "❌" in out and "Goodbye." in out
+
+
+def test_convert_mail_from_the_menu(
+    chattr_root: Path, fixture_family: FamilyExports, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Convert → Mail → the mbox → central archive → no HTML → owner
+    answers = ["1", "5", str(fixture_family.paths["mbox"]), "", "", family.OWNER.emails[0], EXIT]
+    assert _menu(chattr_root, monkeypatch, answers) == 0
+    assert _rows(chattr_root) and len(_rows(chattr_root)) == 4
+    assert sum(owned for _, owned in _rows(chattr_root)) == 1
