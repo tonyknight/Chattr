@@ -35,6 +35,7 @@ from collections import defaultdict, Counter
 from dataclasses import dataclass, asdict
 
 from chattr import apple_time
+from chattr.chatdb import connect_readonly
 
 
 @dataclass
@@ -135,7 +136,7 @@ class DatabaseDiagnostics:
     def run_full_diagnostic(self):
         """Run the complete diagnostic suite (derived from imessage-exporter's diagnostics; see NOTICE)"""
         try:
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = connect_readonly(self.db_path)
 
             print("Building cache...")
             self._build_cache()
@@ -612,7 +613,7 @@ def database_search():
     print(f"\nGenerating search query for: '{search_string}'")
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = connect_readonly(db_path)
         cursor = conn.cursor()
 
         # Get all table names
@@ -774,7 +775,7 @@ def generate_attachment_report():
 
     try:
         # Connect to database
-        conn = sqlite3.connect(db_path)
+        conn = connect_readonly(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -1034,7 +1035,7 @@ def extract_null_messages():
     print(f"Extracting null text messages from: {db_path}")
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = connect_readonly(db_path)
         conn.row_factory = sqlite3.Row
 
         # Comprehensive query to get all null text messages with full metadata

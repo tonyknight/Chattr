@@ -59,6 +59,7 @@ import threading
 from tqdm import tqdm
 
 from chattr import apple_time, typedstream
+from chattr.chatdb import connect_readonly
 
 # Optional dependencies for contact parsing
 try:
@@ -402,7 +403,7 @@ class iMessageDatabaseParser:
 
         # Open read-only connection
         try:
-            self.conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            self.conn = connect_readonly(db_path)
             # Configure connection to return rows as dictionaries
             self.conn.row_factory = sqlite3.Row
         except sqlite3.OperationalError as e:
@@ -1072,8 +1073,7 @@ class iMessageDatabaseParser:
             return []
 
         # Create a new connection for this thread
-        thread_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-        thread_conn.row_factory = sqlite3.Row
+        thread_conn = connect_readonly(self.db_path)
 
         try:
             # Build query for this batch
@@ -1234,8 +1234,7 @@ class iMessageDatabaseParser:
     def _get_attachments_for_message_thread(self, message_id: int) -> List[Attachment]:
         """Get attachments for a message (thread-safe version)"""
         # Create a new connection for this thread
-        thread_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-        thread_conn.row_factory = sqlite3.Row
+        thread_conn = connect_readonly(self.db_path)
 
         try:
             query = """
@@ -1300,7 +1299,7 @@ class iMessageDatabaseParser:
 
     def _get_tapbacks_for_message_thread(self, message_guid: str) -> List[Tapback]:
         """Get tapbacks for a message (thread-safe version: its own connection)"""
-        thread_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        thread_conn = connect_readonly(self.db_path)
         try:
             return self._tapbacks_by_target(thread_conn, message_guid).get(message_guid, [])
         finally:
