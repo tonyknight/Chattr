@@ -17,11 +17,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from chattr.people import PeopleResolver
 from chattr.records import (
     ConversationRecord,
     MessageRecord,
@@ -29,6 +30,25 @@ from chattr.records import (
     records_from_parser,
 )
 from chattr.schema import apply_migrations
+
+
+@dataclass
+class UnresolvedHandle:
+    """A handle no contact or alias could name: it needs a human to link it to a person."""
+
+    service: str
+    identifier: str
+    display_name: Optional[str]
+    messages: int
+    first_seen: Optional[str]
+    last_seen: Optional[str]
+
+
+@dataclass
+class PeopleResult:
+    newly_resolved: int = 0  # handles that gained or changed their person this time
+    owner_handles: int = 0  # handles that are the archive owner
+    unresolved: list[UnresolvedHandle] = field(default_factory=list)
 
 
 @dataclass
@@ -145,6 +165,56 @@ class DatabaseManager:
             "SELECT id FROM handles WHERE service = ? AND normalized = ?", (service, normalized)
         ).fetchone()
         return int(row[0])
+
+    # --- People -----------------------------------------------------------------------------
+
+    def resolve_people(
+        self, resolver: PeopleResolver, service: Optional[str] = None
+    ) -> PeopleResult:
+        """Link handles to people, derive the owner, and report the handles still unnamed.
+
+        A handle's `person` is set from the aliases, then the contacts. A person already set is
+        kept unless an alias or contact now names someone else. The owner's handles get the
+        owner's name, their participant rows the role `owner`, and their messages `is_from_owner`.
+        Safe to repeat.
+        """
+        db = self._db
+        result = PeopleResult()
+        query = "SELECT id, service, identifier, display_name, person FROM handles"
+        rows = db.execute(
+            query + (" WHERE service = ?" if service else ""), (service,) if service else ()
+        ).fetchall()
+        for row in rows:
+            person = resolver.person_for(row["identifier"], row["display_name"])
+            if person and person != row["person"]:
+                db.execute("UPDATE handles SET person = ? WHERE id = ?", (person, row["id"]))
+                result.newly_resolved += 1
+            if resolver.owner_name and resolver.is_owner(row["identifier"], row["display_name"]):
+                result.owner_handles += 1
+                db.execute(
+                    "UPDATE participants SET role = 'owner' WHERE handle_id = ?", (row["id"],)
+                )
+                db.execute(
+                    "UPDATE messages SET is_from_owner = 1 "
+                    "WHERE sender_handle_id = ? AND is_from_owner = 0",
+                    (row["id"],),
+                )
+        result.unresolved = self.unresolved_handles(service)
+        db.commit()
+        return result
+
+    def unresolved_handles(self, service: Optional[str] = None) -> list[UnresolvedHandle]:
+        """Handles with no person yet, the busiest first."""
+        rows = self._db.execute(
+            "SELECT h.service, h.identifier, h.display_name, COUNT(m.id) AS messages, "
+            "MIN(m.timestamp_utc) AS first_seen, MAX(m.timestamp_utc) AS last_seen "
+            "FROM handles h LEFT JOIN messages m ON m.sender_handle_id = h.id "
+            "WHERE h.person IS NULL"
+            + (" AND h.service = ?" if service else "")
+            + " GROUP BY h.id ORDER BY messages DESC, h.service, h.identifier",
+            (service,) if service else (),
+        ).fetchall()
+        return [UnresolvedHandle(**dict(row)) for row in rows]
 
     def _participant(self, conversation_id: str, handle_id: int) -> None:
         self._db.execute(

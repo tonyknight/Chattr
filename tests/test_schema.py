@@ -29,7 +29,7 @@ def test_fresh_database_reaches_the_current_version(tmp_path: Path) -> None:
     apply_migrations(conn)
     assert TABLES <= _tables(conn)
     version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == CURRENT_VERSION == 2
+    assert version == CURRENT_VERSION == 3
 
 
 def test_migrations_are_idempotent(tmp_path: Path) -> None:
@@ -103,3 +103,35 @@ def test_the_view_shows_a_voicemails_transcript_as_its_text(tmp_path: Path) -> N
     rows = dict(conn.execute("SELECT id, body FROM messages_view").fetchall())
     assert rows == {"a": "typed text", "b": "spoken words", "c": "both"}
     assert conn.execute("SELECT body FROM messages WHERE id = 'b'").fetchone()[0] is None
+
+
+def test_the_view_names_the_sender_by_person_when_known(tmp_path: Path) -> None:
+    from chattr.schema import MIGRATION_1, MIGRATION_2
+
+    conn = sqlite3.connect(tmp_path / "chattr.sqlite")
+    conn.execute(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    conn.executescript(MIGRATION_1)
+    conn.executescript(MIGRATION_2)  # a database from before version 3
+    conn.executemany("INSERT INTO schema_version VALUES (?, 'then')", [(1,), (2,)])
+    conn.execute(
+        "INSERT INTO conversations (id, service, source_id, type) VALUES ('c', 'S', 'x', 'individual')"
+    )
+    conn.executemany(
+        "INSERT INTO handles (id, service, identifier, normalized, display_name, person) VALUES (?, 'S', ?, ?, ?, ?)",
+        [
+            (1, "+1555", "+1555", None, "Ana Costa"),
+            (2, "bob", "bob", "Bob B", None),
+            (3, "zed", "zed", None, None),
+        ],
+    )
+    for index, handle in enumerate((1, 2, 3)):
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, timestamp_utc, sender_handle_id, body, content_hash) "
+            "VALUES (?, 'c', '2024-01-01T00:00:00+00:00', ?, 'x', 'h')",
+            (f"m{index}", handle),
+        )
+    assert apply_migrations(conn) == CURRENT_VERSION
+    senders = dict(conn.execute("SELECT id, message_sender FROM messages_view").fetchall())
+    assert senders == {"m0": "Ana Costa", "m1": "Bob B", "m2": "zed"}  # person, name, identifier

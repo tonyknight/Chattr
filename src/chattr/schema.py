@@ -154,7 +154,27 @@ JOIN conversations c ON c.id = m.conversation_id
 LEFT JOIN handles h ON h.id = m.sender_handle_id;
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, MIGRATION_1), (2, MIGRATION_2)]
+# Version 3: once a handle is resolved to a person, the person's name is the sender everywhere the
+# legacy view is used (pages and exports).
+MIGRATION_3 = """
+DROP VIEW messages_view;
+CREATE VIEW messages_view AS
+SELECT
+    m.id AS id,
+    m.timestamp_utc AS timestamp,
+    COALESCE(c.name, c.source_id) AS message_author,
+    COALESCE(h.person, h.display_name, h.identifier) AS message_sender,
+    COALESCE(m.body, m.transcript) AS body,
+    m.content_type AS type,
+    c.service AS service,
+    m.is_from_owner AS is_from_owner,
+    m.conversation_id AS conversation_id
+FROM messages m
+JOIN conversations c ON c.id = m.conversation_id
+LEFT JOIN handles h ON h.id = m.sender_handle_id;
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3)]
 CURRENT_VERSION = MIGRATIONS[-1][0]
 
 
