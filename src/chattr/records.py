@@ -129,25 +129,46 @@ _LEGACY_TYPES = {
     "sticker": "media",
     "media": "media",
     "system": "system",
+    "call": "call",
 }
 
 
-def _attachment_from_parser(message: dict[str, Any]) -> tuple[AttachmentRecord, ...]:
-    """The file a legacy parser dict points to: hashed when it is on disk, else just named."""
-    path, name = message.get("attachment_path"), message.get("attachment_name")
-    if not path and not name:
-        return ()
-    name = name or Path(str(path)).name
-    mime = mimetypes.guess_type(name)[0]
-    if path and Path(path).is_file():
-        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return (
-            AttachmentRecord(
-                digest, name, mime, Path(path).stat().st_size, message.get("archival_path")
-            ),
-        )
-    # The export names a file that wasn't included: identify it by name instead.
-    return (AttachmentRecord(_digest("attachment", name), name, mime, None),)
+def _attachments_from_parser(message: dict[str, Any]) -> tuple[AttachmentRecord, ...]:
+    """The files a legacy parser dict points to: hashed when on disk, else just named.
+
+    A dict lists them under `attachments` (each `path`, `name`) or, for a single file, under
+    `attachment_path`/`attachment_name`.
+    """
+    entries = message.get("attachments") or []
+    if not entries and (message.get("attachment_path") or message.get("attachment_name")):
+        entries = [
+            {
+                "path": message.get("attachment_path"),
+                "name": message.get("attachment_name"),
+                "archival_path": message.get("archival_path"),
+            }
+        ]
+    records = []
+    for entry in entries:
+        path, name = entry.get("path"), entry.get("name")
+        name = name or (Path(str(path)).name if path else None)
+        if not name:
+            continue
+        mime = mimetypes.guess_type(name)[0]
+        stored = entry.get("archival_path")
+        if path and Path(path).is_file():
+            digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            records.append(AttachmentRecord(digest, name, mime, Path(path).stat().st_size, stored))
+        else:  # the export names a file that wasn't included: identify it by name instead
+            records.append(AttachmentRecord(_digest("attachment", name), name, mime, None, stored))
+    return tuple(records)
+
+
+def _reactions_from_parser(message: dict[str, Any]) -> tuple[ReactionRecord, ...]:
+    return tuple(
+        ReactionRecord(type="Reaction", sender=r.get("actor"), emoji=r.get("emoji"))
+        for r in message.get("reactions") or []
+    )
 
 
 def records_from_parser(
@@ -167,7 +188,14 @@ def records_from_parser(
         author = message.get("author")
         extras = {
             key: message[key]
-            for key in ("attachment_path", "shared_link", "omitted")
+            for key in (
+                "attachment_path",
+                "shared_link",
+                "link_text",
+                "omitted",
+                "call_duration",
+                "unsent",
+            )
             if message.get(key)
         }
         records.append(
@@ -181,7 +209,8 @@ def records_from_parser(
                 time_precision=message.get("precision") or "second",
                 tz_assumed=timestamp.tzinfo is None,
                 service_specific=extras,
-                attachments=_attachment_from_parser(message),
+                attachments=_attachments_from_parser(message),
+                reactions=_reactions_from_parser(message),
             )
         )
     return records

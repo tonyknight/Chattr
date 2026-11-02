@@ -28,7 +28,15 @@ from chattr.config import resolve_root
 # Directory structure to create in the Chattr root
 CHATTR_STRUCTURE = {
     "Database": [],
-    "Output": ["Chattr", "Messenger", "GoogleVoice", "Voicemail", "WhatsApp", "iMessage"],
+    "Output": [
+        "Chattr",
+        "Messenger",
+        "Instagram",
+        "GoogleVoice",
+        "Voicemail",
+        "WhatsApp",
+        "iMessage",
+    ],
     "Services": [],
     "temp": [],
 }

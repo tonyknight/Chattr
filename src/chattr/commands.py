@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from chattr.config import Settings
+from chattr.records import ConversationRecord
 from chattr.database_manager import DatabaseManager, ImportCounts
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
@@ -28,7 +30,7 @@ from chattr.media_archive import archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
 from chattr.parsers.imessage_parser import IMessageParser
-from chattr.parsers.messenger_parser import MessengerParser
+from chattr.parsers.messenger_parser import InstagramParser, MessengerParser
 from chattr.parsers.whatsapp_parser import WhatsAppParser
 
 PathLike = Union[str, Path]
@@ -37,10 +39,16 @@ PathLike = Union[str, Path]
 SERVICES: dict[str, tuple[str, Any]] = {
     "whatsapp": ("WhatsApp", WhatsAppParser),
     "messenger": ("Messenger", MessengerParser),
+    "instagram": ("Instagram", InstagramParser),
 }
 
 #: Output folder for each service (matches preflight's `Output/` tree).
-OUTPUT_FOLDERS = {"whatsapp": "WhatsApp", "messenger": "Messenger", "imessage": "iMessage"}
+OUTPUT_FOLDERS = {
+    "whatsapp": "WhatsApp",
+    "messenger": "Messenger",
+    "instagram": "Instagram",
+    "imessage": "iMessage",
+}
 
 #: Name of the HTML page for the whole central archive (Chattr's earlier name for it).
 ARCHIVE_PAGE = "All_Chats_Archive.html"
@@ -87,6 +95,37 @@ def _apply_aliases(messages: list[dict[str, Any]], aliases: Optional[PathLike]) 
         author = message.get("author")
         if author in mapping:
             message["author"] = mapping[author]
+
+
+def _conversation(
+    service: str, export: Path, parser: Any, messages: list[dict[str, Any]]
+) -> ConversationRecord:
+    """The conversation an export holds.
+
+    Exports that describe their thread (Messenger, Instagram) are keyed by its path and named by
+    its title; the others by the export's folder or file name. More than two people make a group.
+    """
+    thread = getattr(parser, "thread", None) or {}
+    if thread.get("thread_path"):
+        participants = tuple(thread.get("participants") or ())
+        conversation = ConversationRecord(
+            service=service,
+            source_id=thread["thread_path"],
+            name=thread.get("title") or thread["thread_path"],
+            participants=participants,
+        )
+        talking = max(len(participants), len({m["author"] for m in messages if m.get("author")}))
+    else:
+        conversation = conversation_for(service, export)
+        talking = len({m["author"] for m in messages if m.get("author")})
+    return replace(conversation, type="group") if talking > 2 else conversation
+
+
+def _file_stem(conversation: ConversationRecord) -> str:
+    """A conversation's name, safe to use in a file name."""
+    return (
+        re.sub(r'[\\/:*?"<>|]+', "-", conversation.name or conversation.source_id).strip() or "chat"
+    )
 
 
 def _archive_media(messages: list[dict[str, Any]], destination: PathLike, service: str) -> None:
@@ -138,7 +177,8 @@ def convert(
     if not export.is_file():
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
-    messages = parser_class().parse(str(export))
+    parser = parser_class()
+    messages = parser.parse(str(export))
     if not messages:
         raise CommandError(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
@@ -146,9 +186,7 @@ def convert(
         if key != "whatsapp":
             raise CommandError(f"Archiving media isn't supported for {name} yet.")
         _archive_media(messages, attachments_dir, name)
-    conversation = conversation_for(name, export)
-    if len({m["author"] for m in messages if m.get("author")}) > 2:
-        conversation = replace(conversation, type="group")  # more than two people are talking
+    conversation = _conversation(name, export, parser, messages)
 
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
@@ -159,7 +197,7 @@ def convert(
                 _write_conversation_html(
                     db,
                     conversation.id,
-                    conversation.source_id,
+                    _file_stem(conversation),
                     output_folder(settings, "Chattr"),
                     owner,
                 )
@@ -173,10 +211,10 @@ def convert(
         counts = import_messages(
             db, None, name, export, messages, owner=owner, conversation=conversation
         )
-        json_path = folder / f"{conversation.source_id}.json"
+        json_path = folder / f"{_file_stem(conversation)}.json"
         db.export_json(name, json_path)
         html_path = (
-            _write_conversation_html(db, conversation.id, conversation.source_id, folder, owner)
+            _write_conversation_html(db, conversation.id, _file_stem(conversation), folder, owner)
             if html
             else None
         )
@@ -399,7 +437,7 @@ def _import_imessage(
                 page = _write_conversation_html(
                     db,
                     batch.conversation.id,
-                    batch.conversation.name or batch.conversation.source_id,
+                    _file_stem(batch.conversation),
                     folder,
                     parser.owner,
                 )

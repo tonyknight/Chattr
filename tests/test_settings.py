@@ -55,6 +55,7 @@ def test_global_and_service_settings_are_merged(home: Path, tmp_path: Path) -> N
         "imessage",
         "whatsapp",
         "messenger",
+        "instagram",
         "googlevoice",
         "voicemail",
     }

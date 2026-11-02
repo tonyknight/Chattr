@@ -53,7 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     convert = sub.add_parser("convert", help="convert one export")
-    convert.add_argument("service", type=str.lower, choices=["whatsapp", "messenger", "imessage"])
+    convert.add_argument(
+        "service", type=str.lower, choices=["whatsapp", "messenger", "instagram", "imessage"]
+    )
     convert.add_argument(
         "export", nargs="?", help="the export file (for iMessage, chat.db; default: configured)"
     )
@@ -242,7 +244,12 @@ SUBCOMMANDS = {
 # --- The step-by-step menu -------------------------------------------------------------------
 
 MAIN_MENU = ("Convert an export", "Generate HTML from the archive", "iMessage tools", "Exit")
-SERVICE_CHOICES = (("whatsapp", "WhatsApp"), ("messenger", "Messenger"), ("imessage", "iMessage"))
+SERVICE_CHOICES = (
+    ("whatsapp", "WhatsApp"),
+    ("messenger", "Messenger"),
+    ("instagram", "Instagram"),
+    ("imessage", "iMessage"),
+)
 IMESSAGE_TOOLS = (
     "List chats",
     "Database information",
