@@ -132,7 +132,7 @@ class DatabaseDiagnostics:
         self.conn = None
 
     def run_full_diagnostic(self):
-        """Run complete diagnostic suite matching original implementation"""
+        """Run the complete diagnostic suite (derived from imessage-exporter's diagnostics; see NOTICE)"""
         try:
             self.conn = sqlite3.connect(self.db_path)
 
@@ -157,7 +157,7 @@ class DatabaseDiagnostics:
                 self.conn.close()
 
     def _build_cache(self):
-        """Build diagnostic caches (mimics original cache building steps)"""
+        """Print the diagnostic cache-building steps (derived from imessage-exporter; see NOTICE)"""
         print("  [1/4] Caching chats...")
         print("  [2/4] Caching chatrooms...")
         print("  [3/4] Caching participants...")

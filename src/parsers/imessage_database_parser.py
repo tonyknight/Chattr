@@ -506,7 +506,10 @@ class iMessageDatabaseParser:
         return chats
 
     def _generate_chat_name(self, chat: Chat, max_length: int = 100) -> str:
-        """Generate a smart chat name like the Rust implementation"""
+        """Generate a chat name: display name, then participants, then the chat identifier.
+
+        The approach follows imessage-exporter's chat naming (see NOTICE).
+        """
         # If there's a display name, use that
         if chat.display_name and chat.display_name.strip():
             return chat.display_name.strip()

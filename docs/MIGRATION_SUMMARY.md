@@ -7,7 +7,9 @@ This document provides a comprehensive summary of the iMessage Database Tool dev
 ## 🎯 Development Goals Achieved
 
 ### Primary Objectives
-1. **Convert Rust iMessage-exporter to Python** - ✅ Complete
+1. **Build a Python iMessage reader, learning from the Rust imessage-exporter** - ✅ Complete
+   (parts of the diagnostics tool, message query structure and tapback parsing are derived from
+   imessage-exporter, GPL-3.0-or-later; see `NOTICE`)
 2. **Achieve feature parity with enhanced capabilities** - ✅ Exceeded expectations
 3. **Industry-leading text extraction performance** - ✅ 99.887% extraction rate
 4. **Professional-grade attachment processing** - ✅ Complete conversion pipeline
@@ -91,7 +93,8 @@ This document provides a comprehensive summary of the iMessage Database Tool dev
 ## 📊 Development Process & Methodology
 
 ### Phase 1: Analysis & Foundation (Initial Development)
-- **Rust codebase analysis** - Comprehensive feature mapping
+- **Study of the imessage-exporter codebase** (Rust, GPL-3.0-or-later) - feature mapping; some
+  portions were translated directly (see `NOTICE`)
 - **Database schema reverse engineering** - Understanding Apple's structure
 - **Core Python implementation** - Basic message extraction
 - **Performance baseline establishment** - Initial benchmarking

@@ -1,0 +1,38 @@
+Chattr
+Copyright (C) 2025-2026 Tony Knight
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See the LICENSE file for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+
+Attribution: imessage-exporter
+------------------------------
+
+Parts of Chattr's iMessage support are derived from imessage-exporter,
+Copyright (C) Christopher Sardegna, licensed under the GNU General Public
+License, version 3 or later:
+
+    https://github.com/ReagentX/imessage-exporter
+
+Derived portions (from the imessage-exporter 2.x series):
+
+  - src/imessage_tools.py: the DatabaseDiagnostics class (diagnostic
+    sections, their order and their output wording), including its
+    attachment path resolution and file size formatting.
+  - src/parsers/imessage_database_parser.py: the structure of the message
+    query (column selection and aliases, and the newest-schema-first
+    fallback), the parsing of tapback target identifiers ("p:N/GUID"), and
+    one code comment about handle ID 0.
+
+Elsewhere, knowledge of Apple's iMessage database layout (tables, columns,
+timestamp encoding, tapback codes) was learned in part by studying
+imessage-exporter. Chattr's other features, such as spam filtering, vCard
+contact resolution, group detection, attachment conversion and reports,
+and HTML output, are its own.

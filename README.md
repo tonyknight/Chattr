@@ -218,11 +218,17 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is open source and available under the MIT License.
+Chattr is free software, licensed under the **GNU General Public License, version 3 or later
+(GPL-3.0-or-later)**. See [`LICENSE`](LICENSE) for the full text and [`NOTICE`](NOTICE) for
+copyright and attribution.
 
 ## 🙏 Acknowledgments
 
-- iMessage parsing inspired by [imessage-exporter](https://github.com/ReagentX/imessage-exporter) (Rust)
+- Parts of Chattr's iMessage support (the diagnostics tool, the message query structure and
+  tapback target parsing) are derived from
+  [imessage-exporter](https://github.com/ReagentX/imessage-exporter) by Christopher Sardegna
+  (GPL-3.0-or-later), and its code informed Chattr's understanding of the iMessage database. See
+  [`NOTICE`](NOTICE).
 - Nord theme for beautiful dark mode UI
 - OpenRouter for AI translation capabilities
 

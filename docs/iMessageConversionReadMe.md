@@ -249,9 +249,12 @@ The tool requires access to the iMessage database:
 - `iMessageTools.py` - Analysis tools suite with menu interface (includes database diagnostics)
 - `requirements.txt` - Python dependencies
 
-## 📈 Comparison with Original Rust Implementation
+## 📈 Comparison with imessage-exporter (Rust)
 
-| Feature | Python Tool | Original Rust |
+This tool was built by studying [imessage-exporter](https://github.com/ReagentX/imessage-exporter)
+(GPL-3.0-or-later), and some portions are derived from it (see `NOTICE`).
+
+| Feature | Python Tool | imessage-exporter |
 |---------|-------------|---------------|
 | **Text Extraction** | 99.887% | ~99.5% |
 | **Spam Filtering** | Integrated | Manual |
