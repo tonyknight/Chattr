@@ -15,7 +15,8 @@ MODULES = [
     "chattr.config",
     "chattr.preflight",
     "chattr.database_manager",
-    "chattr.html_generator",
+    "chattr.render",
+    "chattr.pages",
     "chattr.attachment_manager",
     "chattr.imessage_tools",
     "chattr.parsers.base_parser",
@@ -34,7 +35,8 @@ def test_package_data_is_bundled() -> None:
     from importlib.resources import files
 
     root = files("chattr")
-    assert root.joinpath("templates", "template.html").is_file()
+    for name in ("base", "page", "mail", "index"):
+        assert root.joinpath("templates", f"{name}.html").is_file()
     assert root.joinpath("defaults", "config.json").is_file()
     assert root.joinpath("defaults", "Services", "iMessage.json").is_file()
 

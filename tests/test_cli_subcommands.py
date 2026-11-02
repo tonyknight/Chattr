@@ -120,7 +120,11 @@ def test_convert_imessage_imports_into_the_archive_by_default(
     out = capsys.readouterr().out
     assert "7 new" in out and f"{family.GROUP_NAME}: 2 messages" in out
     assert _archived(chattr_root) == 7
-    assert len(list((chattr_root / "Output" / "Chattr").glob("*.html"))) == 3
+    site = chattr_root / "Output" / "Chattr"
+    assert (site / "index.html").is_file()
+    assert (
+        site / "Messages" / "Groups" / family.GROUP_NAME / f"(2024) {family.GROUP_NAME}.html"
+    ).is_file()
     assert not (chattr_root / "Output" / "iMessage" / "imessage_export.json").exists()
     assert _run(chattr_root, "convert", "imessage", db, "--spam-mode", "disabled") == 0
     assert "0 new" in capsys.readouterr().out and _archived(chattr_root) == 7
@@ -167,9 +171,10 @@ def test_a_missing_export_fails_with_a_plain_message(
 def test_html_renders_the_archive(chattr_root: Path, fixture_family: FamilyExports) -> None:
     assert _run(chattr_root, "html") == 1  # nothing archived yet
     _run(chattr_root, "convert", "whatsapp", _whatsapp(fixture_family))
-    out = chattr_root / "archive.html"
-    assert _run(chattr_root, "html", "--out", str(out), "--owner", family.OWNER.name) == 0
-    assert out.is_file()
+    out = chattr_root / "site"
+    assert _run(chattr_root, "html", "--out", str(out)) == 0
+    assert (out / "index.html").is_file() and list(out.rglob("(*) *.html"))
+    assert _run(chattr_root, "html", "--out", str(out), "--attachments-dir", str(out)) == 0
 
 
 def test_chats_lists_the_database(

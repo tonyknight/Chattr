@@ -116,9 +116,9 @@ def test_json_and_html_files_are_named_by_the_title_not_the_thread_path(
         chattr_root, "messenger", fixture_family.paths["messenger"], route="service", html=True
     )
     assert result.json_path is not None and result.json_path.name == f"{JOAO}.json"
-    assert result.html_path is not None and result.html_path.name.startswith(
-        f"[{JOAO}] (2019-07-20"
-    )
+    site = chattr_root / "Output" / "Messenger"
+    assert result.html_path == site / "index.html"
+    assert (site / "Messages" / JOAO / f"(2019) {JOAO}.html").is_file()
 
 
 @pytest.mark.parametrize("service", ["messenger", "instagram"])

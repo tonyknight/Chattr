@@ -3,7 +3,7 @@
 Both call the same functions in `chattr.commands`, so anything the menu does can be scripted:
 
     chattr-cli [--root DIR] convert <service> [export] [--db | --json] [--html] ...
-    chattr-cli [--root DIR] html [--out FILE] [--owner NAME]
+    chattr-cli [--root DIR] html [--out DIR] [--attachments-dir DIR]
     chattr-cli [--root DIR] people [--contacts F] [--aliases F] [--owner NAME] [--json]
     chattr-cli [--root DIR] chats [chat.db]
     chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
@@ -116,9 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
     voicemail.add_argument("--model", help="local speech-to-text model (file or folder)")
     voicemail.add_argument("--language", help="spoken language code, such as en (default: detect)")
 
-    html = sub.add_parser("html", help="render the central archive as one HTML page")
-    html.add_argument("--out", help="output file (default: Output/Chattr/All_Chats_Archive.html)")
-    html.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
+    html = sub.add_parser(
+        "html", help="render the central archive as pages: one per person (or group) per year"
+    )
+    html.add_argument("--out", help="output folder (default: Output/Chattr)")
+    html.add_argument(
+        "--attachments-dir",
+        action="append",
+        default=[],
+        help="a folder to link attachment files from (repeatable)",
+    )
 
     people = sub.add_parser(
         "people", help="link handles to people (contacts, aliases) and list those still unnamed"
@@ -281,7 +288,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _run_html(settings: Settings, args: argparse.Namespace) -> int:
-    path = commands.generate_html(settings, out=args.out, owner=args.owner)
+    path = commands.generate_html(settings, out=args.out, attachments_dirs=args.attachments_dir)
     if path is None:
         print("The central archive is empty: convert an export first.")
         return 1
@@ -469,7 +476,7 @@ def _menu_convert_imessage(settings: Settings) -> None:
 
 
 def _menu_html(settings: Settings) -> None:
-    path = commands.generate_html(settings, owner=_owner())
+    path = commands.generate_html(settings)
     print(f"HTML: {path}" if path else "The central archive is empty: convert an export first.")
 
 

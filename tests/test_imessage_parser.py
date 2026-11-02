@@ -174,10 +174,11 @@ def test_service_route_still_writes_native_json(
 
 def test_html_is_written_per_conversation(chattr_root: Path, fixture_family: FamilyExports) -> None:
     result = _import(chattr_root, fixture_family.paths["imessage"], html=True)
-    assert result.html_path is not None
-    pages = list((chattr_root / "Output" / "Chattr").glob("*.html"))
-    assert len(pages) == 3
-    assert any(family.GROUP_NAME in p.name for p in pages)
+    site = chattr_root / "Output" / "Chattr"
+    assert result.html_path == site / "index.html"
+    pages = sorted(p.relative_to(site).as_posix() for p in site.rglob("(*) *.html"))
+    assert f"Messages/Groups/{family.GROUP_NAME}/(2024) {family.GROUP_NAME}.html" in pages
+    assert any(p.startswith("Messages/+15550101/") for p in pages)  # Ana, no contacts given
 
 
 def test_unknown_route_is_a_command_error(chattr_root: Path, fixture_family: FamilyExports) -> None:

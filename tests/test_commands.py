@@ -64,22 +64,22 @@ def test_messenger_converts_with_fixed_encoding(
     assert family.JOAO.name in senders
 
 
-def test_html_is_written_for_the_conversation_and_the_archive(
+def test_html_is_written_as_pages_per_person_per_year(
     chattr_root: Path, fixture_family: FamilyExports
 ) -> None:
     settings = Settings.load(chattr_root)
     result = commands.convert(
         settings, "whatsapp", _whatsapp(fixture_family), html=True, owner=family.OWNER.name
     )
-    assert (
-        result.html_path is not None
-        and result.html_path.parent == chattr_root / "Output" / "Chattr"
-    )
-    assert result.html_path.name.startswith("[WhatsApp Chat - Ana Costa] (")
-    assert "Que lindo! Buy two." in result.html_path.read_text(encoding="utf-8")
-    archive = commands.generate_html(settings, owner=family.OWNER.name)
-    assert archive == chattr_root / "Output" / "Chattr" / "All_Chats_Archive.html"
-    assert archive.is_file()
+    site = chattr_root / "Output" / "Chattr"
+    assert result.html_path == site / "index.html"
+    page = site / "Messages" / family.ANA.name / f"(2024) {family.ANA.name}.html"
+    assert "Que lindo! Buy two." in page.read_text(encoding="utf-8")
+    assert commands.generate_html(settings) == site / "index.html"
+
+
+def test_generating_html_for_an_empty_archive_says_so(chattr_root: Path) -> None:
+    assert commands.generate_html(Settings.load(chattr_root)) is None
 
 
 def test_aliases_rename_senders(

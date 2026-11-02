@@ -72,7 +72,7 @@ def test_the_transcript_is_what_the_view_and_the_html_show(
     assert result.html_path is not None
     pages = "".join(
         page.read_text(encoding="utf-8")
-        for page in (chattr_root / "Output" / "Chattr").glob("*.html")
+        for page in (chattr_root / "Output" / "Chattr").rglob("(*) *.html")
     )
     assert STUB["1.amr"] in pages and STUB["2.amr"] in pages
     assert STUB["1.amr"] in {r[0] for r in _rows(chattr_root, "SELECT body FROM messages_view")}

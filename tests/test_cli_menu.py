@@ -78,7 +78,8 @@ def test_convert_to_the_service_folder_with_html(
     answers = ["1", "2", str(fixture_family.paths["messenger"]), "2", "y", "", EXIT]
     assert _menu(chattr_root, monkeypatch, answers) == 0
     folder = chattr_root / "Output" / "Messenger"
-    assert list(folder.glob("*.json")) and list(folder.glob("*.html"))
+    assert list(folder.glob("*.json")) and (folder / "index.html").is_file()
+    assert list(folder.rglob("(*) *.html"))
     assert not (chattr_root / "Database" / "chattr.sqlite").exists() or not _rows(chattr_root)
 
 
@@ -118,9 +119,10 @@ def test_imessage_with_custom_settings_matches_the_subcommand(
 def test_generate_html_from_the_archive(
     chattr_root: Path, fixture_family: FamilyExports, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    answers = ["1", "1", _whatsapp(fixture_family), "", "", "", "2", family.OWNER.name, EXIT]
+    answers = ["1", "1", _whatsapp(fixture_family), "", "", "", "2", EXIT]
     assert _menu(chattr_root, monkeypatch, answers) == 0
-    assert (chattr_root / "Output" / "Chattr" / commands.ARCHIVE_PAGE).is_file()
+    site = chattr_root / "Output" / "Chattr"
+    assert (site / "index.html").is_file() and list(site.rglob("(*) *.html"))
 
 
 def test_imessage_tools(

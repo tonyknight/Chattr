@@ -118,7 +118,9 @@ def test_json_route_and_html(chattr_root: Path, fixture_family: FamilyExports) -
     )
     data = json.loads(result.json_path.read_text(encoding="utf-8"))
     assert len(data["messages"]) == 4
-    pages = list((chattr_root / "Output" / "Mail").glob("*.html"))
+    site = chattr_root / "Output" / "Mail"
+    assert result.html_path == site / "index.html"
+    pages = list((site / "Mail").rglob("*.html"))
     assert len(pages) == 2 and any("Fotos de São Martinho" in p.name for p in pages)
     assert not commands.central_database(Settings.load(chattr_root)).exists()
 
@@ -127,8 +129,9 @@ def test_html_for_the_central_archive_is_one_page_per_thread(
     chattr_root: Path, fixture_family: FamilyExports
 ) -> None:
     result = _convert(chattr_root, fixture_family.paths["mbox"], html=True)
-    assert result.html_path is not None
-    assert len(list((chattr_root / "Output" / "Chattr").glob("*.html"))) == 2
+    site = chattr_root / "Output" / "Chattr"
+    assert result.html_path == site / "index.html"
+    assert len(list((site / "Mail").rglob("*.html"))) == 2
 
 
 def test_the_subcommand(

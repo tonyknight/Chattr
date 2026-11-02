@@ -114,7 +114,10 @@ def test_json_route_and_html(chattr_root: Path, fixture_family: FamilyExports) -
     result = _convert(chattr_root, fixture_family.paths["google_voice"], route="service", html=True)
     assert result.json_path == chattr_root / "Output" / "GoogleVoice" / "GoogleVoice.json"
     assert len(json.loads(result.json_path.read_text(encoding="utf-8"))["messages"]) == 6
-    assert len(list((chattr_root / "Output" / "GoogleVoice").glob("*.html"))) == 2
+    site = chattr_root / "Output" / "GoogleVoice"
+    assert result.html_path == site / "index.html"
+    assert (site / "Messages" / family.ANA.name / "(2018) Ana Costa.html").is_file()
+    assert (site / "Messages" / family.UNKNOWN_HANDLE / "(2018) +15550199.html").is_file()
 
 
 def test_the_subcommand_and_the_menu(

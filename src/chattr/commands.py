@@ -19,14 +19,15 @@ import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Iterable, Optional, Sequence, Union
 
 from chattr.config import Settings
+from chattr.pages import render_pages
 from chattr.people import Aliases, Contacts, PeopleResolver
+from chattr.render import Renderer
 from chattr.records import ConversationRecord
 from chattr.transcription import Transcriber
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
-from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
@@ -66,9 +67,6 @@ OUTPUT_FOLDERS = {
     "googlevoice": "GoogleVoice",
     "voicemail": "Voicemail",
 }
-
-#: Name of the HTML page for the whole central archive (Chattr's earlier name for it).
-ARCHIVE_PAGE = "All_Chats_Archive.html"
 
 #: File name of iMessage's native JSON export (Chattr's earlier example name for it).
 IMESSAGE_EXPORT = "imessage_export.json"
@@ -192,17 +190,24 @@ def _file_stem(conversation: ConversationRecord) -> str:
     )
 
 
-def _write_batch_pages(
-    db: DatabaseManager, batches: list[Any], folder: Path, owner: Optional[str]
-) -> Optional[Path]:
-    """One HTML page per conversation; returns the first page written."""
-    first = None
-    for batch in batches:
-        page = _write_conversation_html(
-            db, batch.conversation.id, _file_stem(batch.conversation), folder, owner
-        )
-        first = first or page
-    return first
+def attachment_roots(settings: Settings, extra: Iterable[PathLike] = ()) -> list[Path]:
+    """Folders the pages may link attachment files from: those given, the pages' own `Messages`
+    folder (where the per-person attachment folders go) and each service's `Attachments` folder."""
+    outputs = Path(settings.root) / "Output"
+    return [
+        *(Path(p) for p in extra),
+        outputs / "Chattr" / "Messages",
+        *sorted(outputs.glob("*/Attachments")),
+    ]
+
+
+def _render_db(db: DatabaseManager, out: Path, roots: Sequence[PathLike]) -> Optional[Path]:
+    """Render everything in `db` under `out`; returns the index page (None when it holds nothing)."""
+    renderer = Renderer(db)
+    if not renderer.pages:
+        return None
+    render_pages(renderer, out, roots)
+    return out / "index.html"
 
 
 def _convert_batches(
@@ -225,6 +230,7 @@ def _convert_batches(
     """
     name, parser_class = SERVICES[key]
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
+    roots = attachment_roots(settings, [attachments_dir] if attachments_dir else [])
     options: dict[str, Any] = {"transcriber": transcriber} if key == "voicemail" else {}
     parser = parser_class(
         owner=owner,
@@ -244,18 +250,14 @@ def _convert_batches(
         with DatabaseManager(central_database(settings)) as db:
             counts = import_conversations(db, settings, name, export, batches)
             unresolved = _resolve(db, resolver, name)
-            html_path = (
-                _write_batch_pages(db, batches, output_folder(settings, "Chattr"), owner)
-                if html
-                else None
-            )
+            html_path = _render_db(db, output_folder(settings, "Chattr"), roots) if html else None
         return ConvertResult(name, counts, html_path=html_path, unresolved=unresolved)
     with DatabaseManager(":memory:") as db:
         counts = import_conversations(db, None, name, export, batches)
         unresolved = _resolve(db, resolver, name)
         json_path = folder / f"{export.stem if export.is_file() else OUTPUT_FOLDERS[key]}.json"
         db.export_json(name, json_path)
-        html_path = _write_batch_pages(db, batches, folder, owner) if html else None
+        html_path = _render_db(db, folder, roots) if html else None
     return ConvertResult(
         name, counts, json_path=json_path, html_path=html_path, unresolved=unresolved
     )
@@ -301,18 +303,6 @@ def _archive_media(
         info = archived.get(path)
         if info and info.archival_path and info.processing_status == "completed":
             holder["archival_path"] = info.archival_path
-
-
-def _write_conversation_html(
-    db: DatabaseManager, conversation_id: str, name: str, folder: Path, owner: Optional[str]
-) -> Optional[Path]:
-    rows = db.get_messages_for_conversation(conversation_id)
-    if not rows:
-        return None
-    first, last = rows[0]["timestamp"][:10], rows[-1]["timestamp"][:10]
-    path = folder / f"[{name}] ({first} to {last}).html"
-    HTMLGenerator().generate_html(rows, str(path), main_author=owner)
-    return path
 
 
 def convert(
@@ -374,6 +364,7 @@ def convert(
     conversation = _conversation(name, export, parser, messages)
     if attachments_dir:
         _archive_media(messages, attachments_dir, name, conversation)
+    roots = attachment_roots(settings, [attachments_dir] if attachments_dir else [])
 
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
@@ -381,17 +372,7 @@ def convert(
                 db, settings, name, export, messages, owner=owner, conversation=conversation
             )
             unresolved = _resolve(db, resolver, name)
-            html_path = (
-                _write_conversation_html(
-                    db,
-                    conversation.id,
-                    _file_stem(conversation),
-                    output_folder(settings, "Chattr"),
-                    owner,
-                )
-                if html
-                else None
-            )
+            html_path = _render_db(db, output_folder(settings, "Chattr"), roots) if html else None
         return ConvertResult(name, counts, html_path=html_path, unresolved=unresolved)
 
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
@@ -402,28 +383,30 @@ def convert(
         unresolved = _resolve(db, resolver, name)
         json_path = folder / f"{_file_stem(conversation)}.json"
         db.export_json(name, json_path)
-        html_path = (
-            _write_conversation_html(db, conversation.id, _file_stem(conversation), folder, owner)
-            if html
-            else None
-        )
+        html_path = _render_db(db, folder, roots) if html else None
     return ConvertResult(
         name, counts, json_path=json_path, html_path=html_path, unresolved=unresolved
     )
 
 
 def generate_html(
-    settings: Settings, out: Optional[PathLike] = None, owner: Optional[str] = None
+    settings: Settings,
+    out: Optional[PathLike] = None,
+    attachments_dirs: Sequence[PathLike] = (),
 ) -> Optional[Path]:
-    """Render the whole central archive as one HTML page; returns its path (None if empty)."""
-    with DatabaseManager(central_database(settings)) as db:
-        rows = db.get_all_messages()
-    if not rows:
+    """Render the whole central archive as pages (see `chattr.render`); returns the index page.
+
+    Returns None when the archive is empty. `attachments_dirs` are extra folders to link
+    attachment files from, besides the usual ones.
+    """
+    if not central_database(settings).exists():
         return None
-    path = Path(out) if out else output_folder(settings, "Chattr") / ARCHIVE_PAGE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    HTMLGenerator().generate_html(rows, str(path), main_author=owner)
-    return path
+    with DatabaseManager(central_database(settings)) as db:
+        return _render_db(
+            db,
+            Path(out) if out else output_folder(settings, "Chattr"),
+            attachment_roots(settings, attachments_dirs),
+        )
 
 
 def _print_spam_stats(parser: iMessageDatabaseParser) -> None:
@@ -630,8 +613,8 @@ def _import_imessage(
         counts = import_conversations(db, settings, "iMessage", db_path, batches)
         unresolved = _resolve(db, resolver, "iMessage")
         if html:
-            html_path = _write_batch_pages(
-                db, batches, output_folder(settings, "Chattr"), parser.owner
+            html_path = _render_db(
+                db, output_folder(settings, "Chattr"), attachment_roots(settings)
             )
     return ConvertResult("iMessage", counts, html_path=html_path, unresolved=unresolved)
 
