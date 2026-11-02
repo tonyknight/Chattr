@@ -58,6 +58,8 @@ import concurrent.futures
 import threading
 from tqdm import tqdm
 
+from chattr import typedstream
+
 # Optional dependencies for contact parsing
 try:
     import vobject
@@ -592,7 +594,10 @@ class iMessageDatabaseParser:
 
     def _extract_text_from_attributed_body(self, attributed_body: bytes) -> Optional[str]:
         """
-        Extract text from attributedBody BLOB data using improved pattern matching.
+        Extract text from attributedBody BLOB data.
+
+        `chattr.typedstream` decodes the archive properly; the pattern matching below is the
+        fallback for blobs the decoder rejects (it can truncate long messages).
 
         This method implements sophisticated text extraction from Apple's typedstream format,
         achieving 99.887% text extraction rate (up from ~73% with basic methods).
@@ -615,6 +620,11 @@ class iMessageDatabaseParser:
         """
         if not attributed_body:
             return None
+
+        # A real typedstream decoder first: it reads the whole string, whatever its length.
+        decoded = typedstream.attributed_text(attributed_body)
+        if decoded is not None:
+            return decoded
 
         try:
             # Method 1: Direct byte-level extraction (most reliable)
