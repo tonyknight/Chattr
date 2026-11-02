@@ -183,3 +183,52 @@ def test_html_is_written_per_conversation(chattr_root: Path, fixture_family: Fam
 def test_unknown_route_is_a_command_error(chattr_root: Path, fixture_family: FamilyExports) -> None:
     with pytest.raises(commands.CommandError, match="Route"):
         _import(chattr_root, fixture_family.paths["imessage"], route="elsewhere")
+
+
+# --- Found in review ------------------------------------------------------------------------
+
+
+def _with_message(fixture_family: FamilyExports, tmp_path: Path, **columns: object) -> Path:
+    """A copy of the fixture chat.db with one more message in the first chat."""
+    import shutil
+
+    db_path = tmp_path / "chat.db"
+    shutil.copy(fixture_family.paths["imessage"], db_path)
+    values = {"service": "iMessage", "date": 800_000_000_000_000_000, "is_read": 1, **columns}
+    with sqlite3.connect(db_path) as db:
+        cur = db.execute(
+            f"INSERT INTO message ({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
+            list(values.values()),
+        )
+        db.execute(
+            "INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (1, ?, 0)",
+            (cur.lastrowid,),
+        )
+    return db_path
+
+
+def test_a_received_message_without_a_handle_has_no_sender(
+    fixture_family: FamilyExports, tmp_path: Path
+) -> None:
+    db_path = _with_message(
+        fixture_family, tmp_path, guid="NOHANDLE-1", text="Group renamed", handle_id=0, is_from_me=0
+    )
+    records = {
+        r.source_id: r
+        for b in IMessageParser(spam_mode="disabled").parse(db_path)
+        for r in b.records
+    }
+    note = records["NOHANDLE-1"]
+    assert note.sender is None and not note.is_from_owner
+    assert "Me" not in {a.sender for a in records.values()}
+
+
+def test_contacts_name_the_people_and_one_to_one_chats(fixture_family: FamilyExports) -> None:
+    result = IMessageParser(contacts=fixture_family.paths["contacts"], spam_mode="disabled").parse(
+        fixture_family.paths["imessage"]
+    )
+    names = {b.conversation.name for b in result}
+    assert family.ANA.name in names  # the one-to-one chat with Ana, not her phone number
+    assert family.ANA.phones[0] not in names
+    senders = {r.sender_name for b in result for r in b.records if not r.is_from_owner}
+    assert family.ANA.name in senders

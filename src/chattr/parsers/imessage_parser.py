@@ -140,11 +140,18 @@ class IMessageParser(BaseParser):
         if chat is None:
             return ConversationRecord(service=SERVICE, source_id=ORPHAN_CHAT, name=ORPHAN_CHAT)
         source_id = reader.chat_guids.get(chat.rowid) or chat.chat_identifier
+        name = reader._generate_chat_name(chat)
+        if not chat.is_group_chat and not (chat.display_name or "").strip():
+            # A one-to-one chat is named after the person when the contacts know them.
+            name = (
+                self._name(chat.chat_identifier, reader._enhance_contact_name(chat.chat_identifier))
+                or name
+            )
         return ConversationRecord(
             service=SERVICE,
             source_id=source_id,
             type="group" if chat.is_group_chat else "individual",
-            name=reader._generate_chat_name(chat),
+            name=name,
             participants=tuple(chat.participants or ()),
             service_specific={"chat_identifier": chat.chat_identifier, "style": chat.style},
         )
@@ -159,12 +166,19 @@ class IMessageParser(BaseParser):
         return fallback
 
     def _record(self, reader: iMessageDatabaseParser, message: Message) -> MessageRecord:
-        raw_handle = None if message.is_from_me else reader.handles.get(message.handle_id or 0)
+        # Handle 0 is not a person: it is the owner in group chats, or no sender at all.
+        raw_handle = (
+            reader.handles.get(message.handle_id)
+            if message.handle_id and not message.is_from_me
+            else None
+        )
         sender_name: Optional[str]
         if message.is_from_me:
             sender_name = self.owner or "Me"
-        else:
+        elif raw_handle:
             sender_name = self._name(raw_handle, reader._get_sender_name(message.handle_id, False))
+        else:
+            sender_name = None
         attachments = tuple(self._attachment(a) for a in (message.attachments or []))
         text = message.text
         placeholder_only = text is not None and not text.replace(OBJECT_REPLACEMENT, "").strip()
