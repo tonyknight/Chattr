@@ -92,25 +92,3 @@ def test_the_subcommand_takes_attachments_dir(
     args = ["--root", str(chattr_root), "convert", "whatsapp", str(export)]
     assert cli.main([*args, "--attachments-dir", str(archive)]) == 0
     assert len(_files(archive)) == 1
-
-
-def test_messenger_does_not_take_attachments_dir_yet(
-    chattr_root: Path,
-    fixture_family: FamilyExports,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    messenger = str(fixture_family.paths["messenger"])
-    with pytest.raises(SystemExit):
-        cli.main(
-            [
-                "--root",
-                str(chattr_root),
-                "convert",
-                "messenger",
-                messenger,
-                "--attachments-dir",
-                str(tmp_path / "A"),
-            ]
-        )
-    assert "--attachments-dir" in capsys.readouterr().err

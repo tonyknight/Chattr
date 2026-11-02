@@ -128,17 +128,23 @@ def _file_stem(conversation: ConversationRecord) -> str:
     )
 
 
+def _media_files(message: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
+    """The files a parsed message carries, each with the dict that should record where it went."""
+    if message.get("attachments"):
+        return [(entry, entry["path"]) for entry in message["attachments"] if entry.get("path")]
+    if message.get("attachment_path"):
+        return [(message, message["attachment_path"])]
+    return []
+
+
 def _archive_media(messages: list[dict[str, Any]], destination: PathLike, service: str) -> None:
     """Copy each message's media into the archive; record where it went on the message."""
-    archived = archive_media(
-        [(m["attachment_path"], m["timestamp"]) for m in messages if m.get("attachment_path")],
-        destination,
-        service,
-    )
-    for message in messages:
-        info = archived.get(message.get("attachment_path", ""))
+    found = [(holder, path, m["timestamp"]) for m in messages for holder, path in _media_files(m)]
+    archived = archive_media([(path, when) for _, path, when in found], destination, service)
+    for holder, path, _ in found:
+        info = archived.get(path)
         if info and info.archival_path:
-            message["archival_path"] = info.archival_path
+            holder["archival_path"] = info.archival_path
 
 
 def _write_conversation_html(
@@ -165,8 +171,8 @@ def convert(
 ) -> ConvertResult:
     """Convert one WhatsApp or Messenger export along the chosen route.
 
-    With `attachments_dir`, WhatsApp media is also copied into that folder, renamed and dated by
-    the message time (originals stay where they are).
+    With `attachments_dir`, the media is also copied into that folder, renamed and dated by the
+    message time (originals stay where they are).
     """
     key = service.lower()
     if key not in SERVICES:
@@ -183,8 +189,6 @@ def convert(
         raise CommandError(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
     if attachments_dir:
-        if key != "whatsapp":
-            raise CommandError(f"Archiving media isn't supported for {name} yet.")
         _archive_media(messages, attachments_dir, name)
     conversation = _conversation(name, export, parser, messages)
 

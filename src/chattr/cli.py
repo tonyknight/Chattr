@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument(
         "--attachments-dir",
         help="also copy media into this archive folder, renamed and dated "
-        "(WhatsApp; iMessage with --json)",
+        "(iMessage: with --json)",
     )
     imessage = convert.add_argument_group("iMessage options")
     imessage.add_argument("--contacts", help="VCF contacts file used to name senders")
@@ -141,8 +141,6 @@ def _check_convert_options(parser: argparse.ArgumentParser, args: argparse.Names
     wrong = [flag(n) for n in IMESSAGE_ONLY if given(n)]
     if wrong:
         parser.error(f"{', '.join(wrong)} applies to iMessage only.")
-    if args.attachments_dir and args.service != "whatsapp":
-        parser.error(f"--attachments-dir isn't supported for {args.service} yet.")
     if not args.export:
         parser.error(f"convert {args.service}: give the export file to convert.")
 
