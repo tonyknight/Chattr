@@ -207,7 +207,7 @@ def convert_imessage(
     db_path: Optional[PathLike] = None,
     out: Optional[PathLike] = None,
     contacts: Optional[PathLike] = None,
-    region: str = "US",
+    region: Optional[str] = None,
     attachment_root: Optional[PathLike] = None,
     batch_size: Optional[int] = None,
     attachment_workers: Optional[int] = None,
@@ -220,7 +220,8 @@ def convert_imessage(
 ) -> ConvertResult:
     """Export an iMessage database (`chat.db`) to iMessage's native JSON in `Output/iMessage/`.
 
-    Unset options come from `services.imessage.preferences`. Archival copies of attachments
+    Unset options come from `services.imessage.preferences` (contacts and phone region from
+    `global.contacts`). Archival copies of attachments
     are written only when `attachments_dir` is given. Import into the central archive comes
     later (ticket 07).
     """
@@ -230,6 +231,8 @@ def convert_imessage(
     attachment_root = attachment_root or settings.get_expanded_path(
         "services.imessage.preferences.database.default_attachments_path"
     )
+    contacts = contacts or settings.get_expanded_path("global.contacts.vcf_file_path") or None
+    region = region or settings.get("global.contacts.phone_region", "US")
     spam_mode = spam_mode or settings.get(
         "services.imessage.preferences.spam_filtering.mode", "aggressive"
     )
@@ -247,7 +250,7 @@ def convert_imessage(
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    parser = _open_imessage(db_path, contacts, region, attachment_root, str(spam_mode))
+    parser = _open_imessage(db_path, contacts, str(region), attachment_root, str(spam_mode))
     try:
         if limit:
             messages = parser.get_messages_with_fallback(limit=limit, chat_filter=chat)

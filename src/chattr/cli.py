@@ -1,475 +1,29 @@
+"""`chattr-cli`: Chattr's step-by-step menu and its non-interactive subcommands.
+
+Both call the same functions in `chattr.commands`, so anything the menu does can be scripted:
+
+    chattr-cli [--root DIR] convert <service> [export] [--db | --json] [--html] ...
+    chattr-cli [--root DIR] html [--out FILE] [--owner NAME]
+    chattr-cli [--root DIR] chats [chat.db]
+    chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
+
+With no command, the menu runs.
+"""
+
 import argparse
-import os
 from pathlib import Path
-import json
-from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import List, Optional, Sequence
+
 from dotenv import load_dotenv
 
-# Import the new classes
-from chattr.database_manager import DatabaseManager
-from chattr.html_generator import HTMLGenerator
-from chattr.parsers.whatsapp_parser import WhatsAppParser
-from chattr.parsers.messenger_parser import MessengerParser
-from chattr.parsers.imessage_database_parser import (
-    iMessageDatabaseParser,
-    Message,
-    Attachment,
-    Tapback,
-)
-from chattr.attachment_manager import (
-    AttachmentManager,
-    create_attachment_info_from_message_attachment,
-)
-from chattr.config import ConfigurationError, Settings, get_config, load_settings
-from chattr.preflight import run_preflight
-from chattr.imessage_export import (  # noqa: F401  (re-exported for older callers)
-    export_to_json,
-    format_timestamp,
-    list_chats,
-    print_message_summary,
-    process_message_attachments,
-)
-from chattr.importing import import_messages
 from chattr import __version__, commands
-
-# iMessage operational functions migrated from imessage_main.py
-
-
-def main_menu():
-    """Displays the main menu and handles user choices for parsing."""
-    print("\n" + "=" * 70)
-    print("💬 Chattr - Your Message Archive Swiss Army Knife")
-    print("=" * 70)
-    print("\nSelect an option:")
-    print("  1. Import WhatsApp Chats")
-    print("  2. Import Facebook Messenger Chats")
-    print("  3. Process iMessage Export")
-    print("  4. Generate HTML Reports")
-    print("  5. Exit")
-    print("=" * 70)
-
-    choice = input("\nEnter your choice: ").strip()
-    return choice
-
-
-def process_and_import(parser, service_name, db_manager):
-    """Handles parsing a source and inserting it into the database."""
-    source_path = input(f"Enter the path to your {service_name} data: ").strip()
-    print(f"Parsing {service_name} data...")
-    messages = parser.parse(source_path)
-    if messages:
-        print(f"Found {len(messages)} messages. Importing into the database...")
-        try:
-            settings = get_config()
-        except ConfigurationError:
-            settings = None
-        with db_manager:
-            counts = import_messages(db_manager, settings, service_name, source_path, messages)
-        print(
-            f"Import complete: {counts.inserted} new, {counts.updated} updated, "
-            f"{counts.unchanged} already archived."
-        )
-    else:
-        print("No messages found or an error occurred during parsing.")
-
-
-def imessage_submenu():
-    """Handles iMessage processing with advanced options"""
-    try:
-        config = get_config()
-
-        print("\n--- iMessage Processing ---")
-        print("Direct database access for maximum performance and data quality")
-        print("\nSelect an option:")
-        print("  1. Quick Process (use default settings)")
-        print("  2. Advanced Options")
-        print("  3. List Available Chats")
-        print("  4. Diagnostics & Tools")
-        print("  5. Back to Main Menu")
-
-        choice = input("Enter your choice: ").strip()
-
-        if choice == "1":
-            imessage_quick_process(config)
-        elif choice == "2":
-            imessage_advanced_options(config)
-        elif choice == "3":
-            imessage_list_chats(config)
-        elif choice == "4":
-            imessage_diagnostics(config)
-        elif choice == "5":
-            return
-        else:
-            print("Invalid choice. Please try again.")
-
-    except ConfigurationError as e:
-        print(f"Configuration error: {e}")
-        print("Please check your config.json file.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-
-def imessage_quick_process(config):
-    """Quick iMessage processing with default settings"""
-    print("\n--- Quick iMessage Processing ---")
-
-    # Get configuration defaults
-    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
-    spam_mode = config.get("services.imessage.preferences.spam_filtering.mode", "aggressive")
-    max_workers = config.get("services.imessage.preferences.performance.workers", 4)
-
-    print(f"Database: {db_path}")
-    print(f"Spam filtering: {spam_mode}")
-    print(f"Workers: {max_workers}")
-
-    # Ask for output file
-    output_file = input(
-        "Enter output JSON file path (e.g., ./output/imessage_export.json): "
-    ).strip()
-    if not output_file:
-        print("Output file is required.")
-        return
-
-    # Create output directory if needed
-    os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-
-    try:
-        # Initialize database
-        enable_spam_filtering = spam_mode != "disabled"
-        aggressive_spam_filtering = spam_mode == "aggressive"
-
-        print("Connecting to iMessage database...")
-        db = iMessageDatabaseParser(
-            db_path=db_path,
-            enable_spam_filtering=enable_spam_filtering,
-            aggressive_spam_filtering=aggressive_spam_filtering,
-        )
-
-        # Get all messages
-        print("Fetching all messages...")
-        messages = db.get_all_messages_parallel(max_workers=max_workers)
-
-        if not messages:
-            print("No messages found.")
-            return
-
-        print(f"Found {len(messages):,} messages")
-
-        # Show spam filtering statistics
-        spam_stats = db.get_spam_filtering_stats()
-        if spam_stats and spam_stats["total_suppressed"] > 0:
-            print(f"Spam filtering removed {spam_stats['total_suppressed']:,} low-value messages:")
-            for category, count in spam_stats.items():
-                if category != "total_suppressed" and count > 0:
-                    print(f"  - {category.replace('_', ' ').title()}: {count:,}")
-
-        # Export to JSON
-        export_to_json(messages, db, output_file)
-
-        print(f"\n✅ Quick processing complete!")
-        print(f"Exported {len(messages):,} messages to {output_file}")
-
-    except Exception as e:
-        print(f"Error during processing: {e}")
-    finally:
-        try:
-            db.close()
-        except:
-            pass
-
-
-def imessage_advanced_options(config):
-    """Advanced iMessage processing with custom options"""
-    print("\n--- Advanced iMessage Options ---")
-
-    # Database path
-    default_db_path = config.get_expanded_path(
-        "services.imessage.preferences.database.default_db_path"
-    )
-    db_path = input(f"Database path (default: {default_db_path}): ").strip()
-    if not db_path:
-        db_path = default_db_path
-
-    # VCF contacts file
-    vcf_path = input("VCF contacts file path (optional): ").strip() or None
-
-    # Spam filtering mode
-    print("\nSpam filtering modes:")
-    print("  1. Aggressive (99.887% text rate) - recommended")
-    print("  2. Conservative (99.572% text rate)")
-    print("  3. Disabled (99.424% text rate)")
-    spam_choice = input("Choose spam filtering mode (1-3, default: 1): ").strip()
-
-    if spam_choice == "2":
-        enable_spam_filtering = True
-        aggressive_spam_filtering = False
-    elif spam_choice == "3":
-        enable_spam_filtering = False
-        aggressive_spam_filtering = False
-    else:
-        enable_spam_filtering = True
-        aggressive_spam_filtering = True
-
-    # Performance settings
-    max_workers = int(
-        input(
-            f"Number of workers (default: {config.get('services.imessage.preferences.performance.workers', 4)}): "
-        ).strip()
-        or config.get("services.imessage.preferences.performance.workers", 4)
-    )
-
-    # Chat filter
-    chat_filter_text = input("Filter by specific chat ID (optional): ").strip()
-    chat_filter = int(chat_filter_text) if chat_filter_text else None
-
-    # Message limit
-    limit_text = input("Maximum messages to export (optional, default: all): ").strip()
-    limit = int(limit_text) if limit_text else None
-
-    # Output file
-    output_file = input("Output JSON file path: ").strip()
-    if not output_file:
-        print("Output file is required.")
-        return
-
-    # Attachment processing
-    process_attachments = input("Process attachments? (y/n, default: n): ").strip().lower() == "y"
-    attachments_dir = None
-    source_attachments_dir = config.get_expanded_path(
-        "services.imessage.preferences.database.default_attachments_path"
-    )
-
-    if process_attachments:
-        attachments_dir = (
-            input(f"Attachments output directory (default: ./Attachments): ").strip()
-            or "./Attachments"
-        )
-        source_attachments_dir = (
-            input(f"Source attachments directory (default: {source_attachments_dir}): ").strip()
-            or source_attachments_dir
-        )
-
-    # Create output directory
-    os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-
-    try:
-        # Initialize database
-        print("Connecting to iMessage database...")
-        db = iMessageDatabaseParser(
-            db_path=db_path,
-            vcf_path=vcf_path,
-            enable_spam_filtering=enable_spam_filtering,
-            aggressive_spam_filtering=aggressive_spam_filtering,
-        )
-
-        # Get messages
-        if limit:
-            print(f"Fetching messages (limit: {limit})...")
-            messages = db.get_messages_with_fallback(limit=limit, chat_filter=chat_filter)
-        else:
-            print("Fetching all messages...")
-            messages = db.get_all_messages_parallel(
-                chat_filter=chat_filter, max_workers=max_workers
-            )
-
-        if not messages:
-            print("No messages found.")
-            return
-
-        print(f"Found {len(messages):,} messages")
-
-        # Show spam filtering statistics
-        spam_stats = db.get_spam_filtering_stats()
-        if spam_stats and spam_stats["total_suppressed"] > 0:
-            print(f"Spam filtering removed {spam_stats['total_suppressed']:,} low-value messages:")
-            for category, count in spam_stats.items():
-                if category != "total_suppressed" and count > 0:
-                    print(f"  - {category.replace('_', ' ').title()}: {count:,}")
-
-        # Export to JSON
-        export_to_json(
-            messages,
-            db,
-            output_file,
-            attachments_dir=attachments_dir,
-            source_attachments_dir=source_attachments_dir,
-        )
-
-        print(f"\n✅ Advanced processing complete!")
-        print(f"Exported {len(messages):,} messages to {output_file}")
-
-    except Exception as e:
-        print(f"Error during processing: {e}")
-    finally:
-        try:
-            db.close()
-        except:
-            pass
-
-
-def imessage_list_chats(config):
-    """List available iMessage chats"""
-    print("\n--- Available iMessage Chats ---")
-
-    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
-
-    try:
-        db = iMessageDatabaseParser(db_path=db_path)
-        list_chats(db)
-    except Exception as e:
-        print(f"Error listing chats: {e}")
-    finally:
-        try:
-            db.close()
-        except:
-            pass
-
-
-def imessage_diagnostics(config):
-    """iMessage diagnostics and tools"""
-    print("\n--- iMessage Diagnostics & Tools ---")
-    print("  1. Database Information")
-    print("  2. Test Database Connection")
-    print("  3. Spam Filtering Analysis")
-    print("  4. Back to iMessage Menu")
-
-    choice = input("Enter your choice: ").strip()
-
-    if choice == "1":
-        imessage_database_info(config)
-    elif choice == "2":
-        imessage_test_connection(config)
-    elif choice == "3":
-        imessage_spam_analysis(config)
-    elif choice == "4":
-        return
-    else:
-        print("Invalid choice.")
-
-
-def imessage_database_info(config):
-    """Show iMessage database information"""
-    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
-
-    try:
-        print(f"\nDatabase path: {db_path}")
-        print(f"Database exists: {os.path.exists(db_path)}")
-
-        if os.path.exists(db_path):
-            stat = os.stat(db_path)
-            print(f"Database size: {stat.st_size:,} bytes")
-            print(f"Last modified: {datetime.fromtimestamp(stat.st_mtime)}")
-
-        db = iMessageDatabaseParser(db_path=db_path)
-        print(f"Handles loaded: {len(db.handles)}")
-        print(f"Chats loaded: {len(db.chats)}")
-
-        # Quick message count
-        messages = db.get_messages_with_fallback(limit=1)
-        if messages:
-            print("Database connection: ✅ Success")
-        else:
-            print("Database connection: ⚠️  No messages found")
-
-    except Exception as e:
-        print(f"Database connection: ❌ Error - {e}")
-    finally:
-        try:
-            db.close()
-        except:
-            pass
-
-
-def imessage_test_connection(config):
-    """Test iMessage database connection"""
-    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
-
-    try:
-        print(f"Testing connection to: {db_path}")
-        db = iMessageDatabaseParser(db_path=db_path)
-
-        # Test basic queries
-        print("✅ Database connection successful")
-        print(f"✅ Loaded {len(db.handles)} handles")
-        print(f"✅ Loaded {len(db.chats)} chats")
-
-        # Test message query
-        messages = db.get_messages_with_fallback(limit=5)
-        print(f"✅ Retrieved {len(messages)} test messages")
-
-        print("\n🎉 All tests passed!")
-
-    except Exception as e:
-        print(f"❌ Connection test failed: {e}")
-    finally:
-        try:
-            db.close()
-        except:
-            pass
-
-
-def imessage_spam_analysis(config):
-    """Analyze spam filtering effectiveness"""
-    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
-
-    try:
-        print("Analyzing spam filtering effectiveness...")
-
-        # Test with different filtering modes
-        modes = [
-            ("Disabled", False, False),
-            ("Conservative", True, False),
-            ("Aggressive", True, True),
-        ]
-
-        for mode_name, enable_filtering, aggressive in modes:
-            print(f"\n--- {mode_name} Mode ---")
-
-            db = iMessageDatabaseParser(
-                db_path=db_path,
-                enable_spam_filtering=enable_filtering,
-                aggressive_spam_filtering=aggressive,
-            )
-
-            # Get a sample of messages
-            messages = db.get_messages_with_fallback(limit=1000)
-
-            spam_stats = db.get_spam_filtering_stats()
-            if spam_stats:
-                total_suppressed = spam_stats["total_suppressed"]
-                print(f"Messages suppressed: {total_suppressed:,}")
-                for category, count in spam_stats.items():
-                    if category != "total_suppressed" and count > 0:
-                        print(f"  - {category.replace('_', ' ').title()}: {count:,}")
-            else:
-                print("No spam filtering applied")
-
-            db.close()
-
-    except Exception as e:
-        print(f"Error during spam analysis: {e}")
-
-
-def generate_html_submenu(db_manager):
-    """Handles the generation of HTML reports from the database."""
-    html_generator = HTMLGenerator()
-    # Placeholder for a more advanced submenu
-    print("\nGenerating 'All Chat' report...")
-    with db_manager:
-        all_messages = db_manager.get_all_messages()
-
-    if all_messages:
-        owner_name = input("Enter the archive owner's name (for 'sent' messages): ").strip()
-        output_path = os.path.join("output", "All_Chats_Archive.html")
-        html_generator.generate_html(all_messages, output_path, main_author=owner_name)
-    else:
-        print("No messages found in the database to generate a report.")
+from chattr.config import ConfigurationError, Settings, load_settings
+from chattr.preflight import run_preflight
 
 
 def database_path(settings: Settings) -> Path:
     """The central database for this Chattr root: `<root>/Database/chattr.sqlite`."""
-    return Path(settings.root) / "Database" / "chattr.sqlite"
+    return commands.central_database(settings)
 
 
 IMESSAGE_ONLY = (
@@ -581,13 +135,33 @@ def _configured_chat_db(settings: Settings) -> str:
     return settings.get_expanded_path("services.imessage.preferences.database.default_db_path")
 
 
+def _print_convert_result(settings: Settings, result: commands.ConvertResult, route: str) -> None:
+    counts = result.counts
+    where = commands.central_database(settings) if route == "central" else result.json_path
+    print(
+        f"{result.service}: {counts.inserted:,} new, {counts.updated:,} updated, "
+        f"{counts.unchanged:,} already archived → {where}"
+    )
+    if result.html_path:
+        print(f"HTML: {result.html_path}")
+
+
+def _print_imessage_result(result: commands.ConvertResult) -> None:
+    print(f"iMessage: {result.counts.total:,} messages → {result.json_path}")
+
+
+def _print_chats(database: str) -> None:
+    for chat_id, name in commands.list_chats(database):
+        print(f"{chat_id:>5}  {name}")
+
+
 def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
     if args.service == "imessage":
         result = commands.convert_imessage(
             settings,
             db_path=args.export,
             contacts=args.contacts,
-            region=args.region or "US",
+            region=args.region,
             attachment_root=args.attachment_root,
             batch_size=args.batch_size,
             attachment_workers=args.attachment_workers,
@@ -597,7 +171,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
             limit=args.limit,
             verbose=args.verbose,
         )
-        print(f"iMessage: {result.counts.total:,} messages → {result.json_path}")
+        _print_imessage_result(result)
         return 0
     route = args.route or "central"
     result = commands.convert(
@@ -609,14 +183,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
         owner=args.owner,
         aliases=args.aliases,
     )
-    counts = result.counts
-    where = commands.central_database(settings) if route == "central" else result.json_path
-    print(
-        f"{result.service}: {counts.inserted:,} new, {counts.updated:,} updated, "
-        f"{counts.unchanged:,} already archived → {where}"
-    )
-    if result.html_path:
-        print(f"HTML: {result.html_path}")
+    _print_convert_result(settings, result, route)
     return 0
 
 
@@ -630,8 +197,7 @@ def _run_html(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _run_chats(settings: Settings, args: argparse.Namespace) -> int:
-    for chat_id, name in commands.list_chats(args.database or _configured_chat_db(settings)):
-        print(f"{chat_id:>5}  {name}")
+    _print_chats(args.database or _configured_chat_db(settings))
     return 0
 
 
@@ -649,37 +215,149 @@ SUBCOMMANDS = {
 }
 
 
+# --- The step-by-step menu -------------------------------------------------------------------
+
+MAIN_MENU = ("Convert an export", "Generate HTML from the archive", "iMessage tools", "Exit")
+SERVICE_CHOICES = (("whatsapp", "WhatsApp"), ("messenger", "Messenger"), ("imessage", "iMessage"))
+IMESSAGE_TOOLS = (
+    "List chats",
+    "Database information",
+    "Test connection",
+    "Spam filtering analysis",
+    "Back",
+)
+
+
+def _ask(prompt: str, default: Optional[str] = None) -> str:
+    """Ask for text; Enter accepts the default (shown in brackets)."""
+    answer = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
+    return answer or (default or "")
+
+
+def _ask_path(prompt: str, default: Optional[str] = None) -> str:
+    """Ask for a path, accepting quoted or drag-and-dropped (backslash-escaped) paths."""
+    answer = _ask(prompt, default).strip("'\"").replace("\\ ", " ")
+    return str(Path(answer).expanduser()) if answer else ""
+
+
+def _choose(title: str, options: Sequence[str], default: Optional[int] = None) -> int:
+    """Ask for one of `options` by number; returns its index. Enter accepts the default."""
+    print(f"\n{title}")
+    for number, option in enumerate(options, 1):
+        print(f"  {number}. {option}")
+    hint = f" [{default + 1}]" if default is not None else ""
+    while True:
+        answer = input(f"Choose 1-{len(options)}{hint}: ").strip()
+        if not answer and default is not None:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+        print(f"Please choose a number from 1 to {len(options)}.")
+
+
+def _yes(prompt: str, default: bool) -> bool:
+    answer = input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+    return answer.startswith("y") if answer else default
+
+
+def _number(prompt: str, default: Optional[int] = None) -> Optional[int]:
+    """Ask for a whole number; Enter accepts the default (or none)."""
+    while True:
+        answer = _ask(prompt, str(default) if default is not None else None)
+        if not answer:
+            return None
+        if answer.isdigit():
+            return int(answer)
+        print("Please enter a whole number.")
+
+
+def _owner() -> Optional[str]:
+    return _ask("Archive owner's name, as it appears in the export (Enter to skip)") or None
+
+
+def _menu_convert(settings: Settings) -> None:
+    index = _choose("Which service?", [name for _, name in SERVICE_CHOICES])
+    key, name = SERVICE_CHOICES[index]
+    if key == "imessage":
+        _menu_convert_imessage(settings)
+        return
+    export = _ask_path(f"Path to the {name} export file")
+    if not export or not Path(export).is_file():
+        print(f"❌ Export file not found: {export or '(none given)'}")
+        return
+    destinations = (
+        "The central archive (Database/chattr.sqlite)",
+        f"The {name} folder, as JSON (Output/{commands.OUTPUT_FOLDERS[key]}/)",
+    )
+    route = ("central", "service")[_choose("Where should it go?", destinations, default=0)]
+    html = _yes("Also write an HTML page?", default=False)
+    result = commands.convert(settings, key, export, route=route, html=html, owner=_owner())
+    _print_convert_result(settings, result, route)
+
+
+def _menu_convert_imessage(settings: Settings) -> None:
+    db_path = _ask_path("Path to the iMessage database", _configured_chat_db(settings))
+    print("iMessage converts to its native JSON in Output/iMessage/.")
+    options: dict = {}
+    if not _yes("Use default settings?", default=True):
+        modes = commands.SPAM_MODES
+        configured = settings.get("services.imessage.preferences.spam_filtering.mode")
+        spam = _choose(
+            "Spam filtering",
+            [mode.title() for mode in modes],
+            default=modes.index(configured) if configured in modes else 0,
+        )
+        options["spam_mode"] = modes[spam]
+        options["workers"] = _number(
+            "Workers", settings.get("services.imessage.preferences.performance.workers")
+        )
+        contacts = settings.get_expanded_path("global.contacts.vcf_file_path") or None
+        options["contacts"] = _ask_path("VCF contacts file (Enter for none)", contacts) or None
+        options["chat"] = _number("Only this chat ID (Enter for all; see iMessage tools)")
+        options["limit"] = _number("At most this many messages (Enter for all)")
+    _print_imessage_result(commands.convert_imessage(settings, db_path=db_path, **options))
+
+
+def _menu_html(settings: Settings) -> None:
+    path = commands.generate_html(settings, owner=_owner())
+    print(f"HTML: {path}" if path else "The central archive is empty: convert an export first.")
+
+
+def _menu_imessage_tools(settings: Settings) -> None:
+    while True:
+        choice = _choose("iMessage tools", IMESSAGE_TOOLS)
+        if choice == len(IMESSAGE_TOOLS) - 1:
+            return
+        db_path = _ask_path("Path to the iMessage database", _configured_chat_db(settings))
+        if choice == 0:
+            _print_chats(db_path)
+        else:
+            commands.doctor(db_path, commands.DOCTOR_CHECKS[choice - 1])
+
+
 def run_menu(settings: Settings) -> int:
     """The step-by-step menu; returns the exit status."""
-    output_dir = settings.get_expanded_path("global.general.output_directory")
-    os.makedirs(output_dir, exist_ok=True)
-
-    db_path = database_path(settings)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    db_manager = DatabaseManager(db_path=str(db_path))
-
-    # Ensure tables are created once at the start
-    with db_manager:
-        db_manager.create_tables()
-
-    while True:
-        choice = main_menu()
-
-        if choice == "1":
-            process_and_import(WhatsAppParser(), "WhatsApp", db_manager)
-        elif choice == "2":
-            process_and_import(MessengerParser(), "Facebook Messenger", db_manager)
-        elif choice == "3":
-            imessage_submenu()
-        elif choice == "4":
-            generate_html_submenu(db_manager)
-        elif choice == "5":
-            print("Exiting.")
-            return 0
-        else:
-            print("Invalid choice. Please try again.")
-
-        print("\n--------------------")
+    print("\n" + "=" * 70)
+    print("💬 Chattr: message exports into readable archives")
+    print(f"   Data folder: {settings.root}")
+    print("=" * 70)
+    actions = (_menu_convert, _menu_html, _menu_imessage_tools)
+    try:
+        while True:
+            choice = _choose("What would you like to do?", MAIN_MENU)
+            if choice == len(MAIN_MENU) - 1:
+                print("Goodbye.")
+                return 0
+            try:
+                actions[choice](settings)
+            except commands.CommandError as error:
+                print(f"❌ {error}")
+    except EOFError:
+        print()
+        return 0
+    except KeyboardInterrupt:
+        print()
+        return 130
 
 
 def main(argv: Optional[List[str]] = None) -> int:

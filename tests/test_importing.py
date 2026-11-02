@@ -9,7 +9,7 @@ import pytest
 from fixtures import FamilyExports, family
 
 from chattr import preflight
-from chattr.config import Settings, load_settings
+from chattr.config import Settings
 from chattr.database_manager import DatabaseManager
 from chattr.importing import conversation_for, import_messages
 from chattr.parsers.whatsapp_parser import WhatsAppParser
@@ -65,16 +65,14 @@ def test_conversation_is_named_after_the_export_folder(fixture_family: FamilyExp
     assert conversation.source_id == "WhatsApp Chat - Ana Costa"
 
 
-def test_cli_import_path_records_state(
+def test_menu_import_records_state(
     root: Path, fixture_family: FamilyExports, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from chattr import cli
 
-    chat = _chat(fixture_family)
-    load_settings(str(root))
-    monkeypatch.setattr("builtins.input", lambda *_: str(chat))
-    cli.process_and_import(
-        WhatsAppParser(), "WhatsApp", DatabaseManager(root / "Database" / "chattr.sqlite")
-    )
+    # Convert → WhatsApp → the export → central archive → no HTML → no owner → Exit
+    answers = iter(["1", "1", str(_chat(fixture_family)), "", "", "", "4"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    assert cli.run_menu(Settings.load(root)) == 0
     state = json.loads((root / "Services" / "WhatsApp.json").read_text())["state"]
     assert state["total_messages_imported"] > 0

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from fixtures import FamilyExports
 
 import chattr
 from chattr import preflight
@@ -43,7 +44,9 @@ def test_every_cli_key_resolves(settings: Settings, key: str) -> None:
     assert settings.get(key, missing) is not missing, f"'{key}' is read but doesn't exist"
 
 
-def test_chattr_cli_with_root_starts_and_exits_cleanly(tmp_path: Path) -> None:
+def test_chattr_cli_with_root_runs_the_menu_and_a_subcommand(
+    tmp_path: Path, fixture_family: FamilyExports
+) -> None:
     import os
     import shutil
     import site
@@ -59,18 +62,26 @@ def test_chattr_cli_with_root_starts_and_exits_cleanly(tmp_path: Path) -> None:
     }
     exe = shutil.which("chattr-cli")
     assert exe
-    result = subprocess.run(
-        [exe, "--root", str(root)],
-        input="5\n",
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (root / "Database" / "chattr.sqlite").is_file()
+
+    def run(*args: str, menu_input: str = "") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [exe, "--root", str(root), *args],
+            input=menu_input,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+            check=False,
+        )
+
+    menu = run(menu_input="4\n")  # the menu's Exit
+    assert menu.returncode == 0, menu.stdout + menu.stderr
     assert (root / "Services" / "iMessage.json").is_file()
+
+    chat = fixture_family.paths["whatsapp"] / "WhatsApp Chat - Ana Costa" / "_chat.txt"
+    convert = run("convert", "whatsapp", str(chat))
+    assert convert.returncode == 0, convert.stdout + convert.stderr
+    assert (root / "Database" / "chattr.sqlite").is_file()
 
 
 def test_cli_database_lives_in_the_root(settings: Settings) -> None:

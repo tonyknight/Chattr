@@ -30,6 +30,6 @@ def test_whatsapp_records_export_as_json(fixture_family: FamilyExports, tmp_path
 
 
 def test_imessage_native_json_export_is_still_available() -> None:
-    from chattr import cli
+    from chattr import imessage_export
 
-    assert callable(cli.export_to_json)
+    assert callable(imessage_export.export_to_json)
