@@ -5,33 +5,34 @@
     "last_updated": "2025-11-11",
     "service": "Voicemail"
   },
-
   "preferences": {
     "parsing": {
       "encoding": "utf-8",
-      "audio_formats": [".mp3", ".wav", ".m4a", ".aac"]
+      "audio_formats": [
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".aac"
+      ]
     },
-
     "transcription": {
       "enabled": false,
-      "provider": "whisper",
-      "model": "base",
-      "language": "en"
+      "provider": "whisper.cpp",
+      "model_path": "",
+      "executable": "whisper-cli",
+      "language": ""
     },
-
     "translation": {
       "enabled": false,
       "use_global_ai_translation": true,
       "skip_duplicates": true,
       "similarity_threshold": 0.8
     },
-
     "export": {
       "json_format": "voicemail_native",
       "include_transcriptions": true,
       "include_audio_metadata": true
     },
-
     "attachments": {
       "general": {
         "process_attachments": true,
@@ -39,14 +40,38 @@
         "preserve_originals": true,
         "max_attachment_workers": 4
       },
-
       "conversion": {
         "enabled": true,
         "quality": 85,
         "supported_formats": {
-          "images": [".heic", ".png", ".webp", ".jpg", ".jpeg", ".gif", ".tiff", ".tif", ".bmp"],
-          "videos": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".3gp", ".webm"],
-          "audio": [".m4a", ".caf", ".mp3", ".wav", ".aac", ".flac"]
+          "images": [
+            ".heic",
+            ".png",
+            ".webp",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".tiff",
+            ".tif",
+            ".bmp"
+          ],
+          "videos": [
+            ".mp4",
+            ".mov",
+            ".avi",
+            ".mkv",
+            ".wmv",
+            ".3gp",
+            ".webm"
+          ],
+          "audio": [
+            ".m4a",
+            ".caf",
+            ".mp3",
+            ".wav",
+            ".aac",
+            ".flac"
+          ]
         },
         "conversion_formats": {
           ".heic": ".jpg",
@@ -55,7 +80,6 @@
           ".caf": ".aac"
         }
       },
-
       "archival_structure": {
         "directory_pattern": "/Attachments/{service}/{year}/{month_number} - {month_name}/",
         "naming_format": "({date}) {time} [{id}].{ext}",
@@ -63,21 +87,18 @@
         "create_date_folders": true
       }
     },
-
     "html_generation": {
       "template": {
         "file": "templates/template.html",
         "theme": "nord",
         "responsive": true
       },
-
       "features": {
         "calendar_navigation": true,
         "image_lightbox": true,
         "search_functionality": false,
         "message_filtering": false
       },
-
       "performance": {
         "lazy_loading": false,
         "chunk_large_conversations": false,
@@ -85,7 +106,6 @@
       }
     }
   },
-
   "state": {
     "last_import_date": null,
     "last_export_file": null,
@@ -94,4 +114,3 @@
     "last_successful_export": null
   }
 }
-
