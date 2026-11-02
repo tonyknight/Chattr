@@ -56,8 +56,13 @@ def test_chattr_cli_with_root_starts_and_exits_cleanly(tmp_path: Path) -> None:
     exe = shutil.which("chattr-cli")
     assert exe
     result = subprocess.run(
-        [exe, "--root", str(root)], input="5\n", capture_output=True, text=True, env=env,
-        timeout=60, check=False,
+        [exe, "--root", str(root)],
+        input="5\n",
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (root / "Database" / "chattr.sqlite").is_file()

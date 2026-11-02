@@ -11,14 +11,22 @@ from chattr.database_manager import DatabaseManager
 from chattr.html_generator import HTMLGenerator
 from chattr.parsers.whatsapp_parser import WhatsAppParser
 from chattr.parsers.messenger_parser import MessengerParser
-from chattr.parsers.imessage_database_parser import iMessageDatabaseParser, Message, Attachment, Tapback
-from chattr.attachment_manager import AttachmentManager, create_attachment_info_from_message_attachment
+from chattr.parsers.imessage_database_parser import (
+    iMessageDatabaseParser,
+    Message,
+    Attachment,
+    Tapback,
+)
+from chattr.attachment_manager import (
+    AttachmentManager,
+    create_attachment_info_from_message_attachment,
+)
 from chattr.config import ConfigurationError, Settings, get_config, load_settings
 from chattr.preflight import run_preflight
 from chattr import __version__
 
-
 # iMessage operational functions migrated from imessage_main.py
+
 
 def format_timestamp(dt: datetime) -> str:
     """Format datetime for display"""
@@ -43,7 +51,7 @@ def print_message_summary(message: Message, attachments: List[Attachment], tapba
     else:
         print("Direction: Received")
         if message.date_read:
-            read_time = iMessageDatabaseParser._apple_timestamp_to_datetime(None, message.date_read)
+            read_time = iMessageDatabaseParser._apple_timestamp_to_datetime(message.date_read)
             print(f"Read: {format_timestamp(read_time)}")
 
     # Show message type info
@@ -76,9 +84,14 @@ def print_message_summary(message: Message, attachments: List[Attachment], tapba
     print(f"{'='*80}")
 
 
-def export_to_json(messages: List[Message], db: iMessageDatabaseParser, output_path: str,
-                  attachments_dir: Optional[str] = None, source_attachments_dir: str = "~/Library/Messages/Attachments",
-                  attachment_workers: int = 4):
+def export_to_json(
+    messages: List[Message],
+    db: iMessageDatabaseParser,
+    output_path: str,
+    attachments_dir: Optional[str] = None,
+    source_attachments_dir: str = "~/Library/Messages/Attachments",
+    attachment_workers: int = 4,
+):
     """Export messages to JSON format with parallel processing and attachment archival"""
 
     print(f"Exporting {len(messages):,} messages to JSON...")
@@ -102,55 +115,63 @@ def export_to_json(messages: List[Message], db: iMessageDatabaseParser, output_p
 
         # Convert to dict for JSON serialization
         message_data = {
-            'id': message.rowid,
-            'guid': message.guid,
-            'text': message.text,
-            'timestamp': message.timestamp.isoformat(),
-            'sender': message.sender,
-            'chat': message.chat_name,
-            'service': message.service,
-            'is_from_me': message.is_from_me,
-            'is_read': message.is_read,
-            'attachments': [
+            "id": message.rowid,
+            "guid": message.guid,
+            "text": message.text,
+            "timestamp": message.timestamp.isoformat(),
+            "sender": message.sender,
+            "chat": message.chat_name,
+            "service": message.service,
+            "is_from_me": message.is_from_me,
+            "is_read": message.is_read,
+            "attachments": [
                 {
-                    'original_filename': att.transfer_name or att.filename,
-                    'filename': (processed_attachments.get(att.filename, {}) or
-                               processed_attachments.get(os.path.basename(att.filename or ''), {})).get('archival_filename', att.transfer_name or att.filename),
-                    'attachment_path': (processed_attachments.get(att.filename, {}) or
-                                      processed_attachments.get(os.path.basename(att.filename or ''), {})).get('archival_path'),
-                    'mime_type': att.mime_type,
-                    'file_size': att.total_bytes,
-                    'is_sticker': att.is_sticker,
-                    'file_hash': (processed_attachments.get(att.filename, {}) or
-                                processed_attachments.get(os.path.basename(att.filename or ''), {})).get('file_hash'),
-                    'is_duplicate': (processed_attachments.get(att.filename, {}) or
-                                   processed_attachments.get(os.path.basename(att.filename or ''), {})).get('is_duplicate', False),
-                    'conversion_applied': (processed_attachments.get(att.filename, {}) or
-                                         processed_attachments.get(os.path.basename(att.filename or ''), {})).get('conversion_applied', False)
+                    "original_filename": att.transfer_name or att.filename,
+                    "filename": (
+                        processed_attachments.get(att.filename or "", {})
+                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
+                    ).get("archival_filename", att.transfer_name or att.filename),
+                    "attachment_path": (
+                        processed_attachments.get(att.filename or "", {})
+                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
+                    ).get("archival_path"),
+                    "mime_type": att.mime_type,
+                    "file_size": att.total_bytes,
+                    "is_sticker": att.is_sticker,
+                    "file_hash": (
+                        processed_attachments.get(att.filename or "", {})
+                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
+                    ).get("file_hash"),
+                    "is_duplicate": (
+                        processed_attachments.get(att.filename or "", {})
+                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
+                    ).get("is_duplicate", False),
+                    "conversion_applied": (
+                        processed_attachments.get(att.filename or "", {})
+                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
+                    ).get("conversion_applied", False),
                 }
                 for att in (message.attachments or [])
             ],
-            'tapbacks': [
-                {
-                    'type': tb.type,
-                    'sender': tb.sender,
-                    'action': tb.action
-                }
-                for tb in (message.tapbacks or []) if tb.action == "Added"
-            ]
+            "tapbacks": [
+                {"type": tb.type, "sender": tb.sender, "action": tb.action}
+                for tb in (message.tapbacks or [])
+                if tb.action == "Added"
+            ],
         }
 
         export_data.append(message_data)
 
     # Write to file
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(export_data, f, indent=2, ensure_ascii=False)
 
     print(f"Exported to: {output_path}")
 
 
-def process_message_attachments(messages: List[Message], attachments_dir: str,
-                              source_attachments_dir: str, max_workers: int = 4) -> Dict[str, Dict[str, Any]]:
+def process_message_attachments(
+    messages: List[Message], attachments_dir: str, source_attachments_dir: str, max_workers: int = 4
+) -> Dict[str, Dict[str, Any]]:
     """
     Process all attachments from messages and return mapping of original filename to processed info
 
@@ -170,7 +191,7 @@ def process_message_attachments(messages: List[Message], attachments_dir: str,
         base_attachments_dir=attachments_dir,
         service_name="iMessage",
         move_files=False,  # Copy files for iMessage (preserve originals)
-        max_workers=max_workers
+        max_workers=max_workers,
     )
 
     # Collect all attachments with their message dates
@@ -183,11 +204,11 @@ def process_message_attachments(messages: List[Message], attachments_dir: str,
                 # Create AttachmentInfo from message attachment
                 attachment_info = create_attachment_info_from_message_attachment(
                     {
-                        'filename': attachment.filename,
-                        'mime_type': attachment.mime_type,
-                        'file_size': attachment.total_bytes
+                        "filename": attachment.filename,
+                        "mime_type": attachment.mime_type,
+                        "file_size": attachment.total_bytes,
                     },
-                    source_dir
+                    source_dir,
                 )
 
                 if attachment_info:
@@ -203,23 +224,23 @@ def process_message_attachments(messages: List[Message], attachments_dir: str,
     # Create mapping for easy lookup during JSON export
     # Use both full path and basename as keys for flexible lookup
     attachment_mapping = {}
-    for attachment in processed_attachments:
+    for info in processed_attachments:
         attachment_data = {
-            'archival_filename': attachment.archival_filename,
-            'archival_path': attachment.archival_path,
-            'file_hash': attachment.file_hash,
-            'is_duplicate': attachment.is_duplicate,
-            'conversion_applied': attachment.conversion_applied,
-            'processing_status': attachment.processing_status,
-            'error_message': attachment.error_message
+            "archival_filename": info.archival_filename,
+            "archival_path": info.archival_path,
+            "file_hash": info.file_hash,
+            "is_duplicate": info.is_duplicate,
+            "conversion_applied": info.conversion_applied,
+            "processing_status": info.processing_status,
+            "error_message": info.error_message,
         }
 
         # Map by both original path and filename for flexible lookup
-        attachment_mapping[attachment.original_path] = attachment_data
-        attachment_mapping[attachment.original_filename] = attachment_data
+        attachment_mapping[info.original_path] = attachment_data
+        attachment_mapping[info.original_filename] = attachment_data
 
         # Also map by basename in case paths don't match exactly
-        basename = os.path.basename(attachment.original_path)
+        basename = os.path.basename(info.original_path)
         attachment_mapping[basename] = attachment_data
 
     return attachment_mapping
@@ -236,7 +257,9 @@ def list_chats(db: iMessageDatabaseParser):
             messages = db.get_messages_with_fallback(limit=1, chat_filter=chat_id)
             if messages:
                 last_message = messages[0]
-                print(f"ID: {chat_id:3d} | {chat_name} (Last: {format_timestamp(last_message.timestamp)})")
+                print(
+                    f"ID: {chat_id:3d} | {chat_name} (Last: {format_timestamp(last_message.timestamp)})"
+                )
             else:
                 print(f"ID: {chat_id:3d} | {chat_name} (No messages)")
         except Exception as e:
@@ -245,19 +268,20 @@ def list_chats(db: iMessageDatabaseParser):
 
 def main_menu():
     """Displays the main menu and handles user choices for parsing."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("💬 Chattr - Your Message Archive Swiss Army Knife")
-    print("="*70)
+    print("=" * 70)
     print("\nSelect an option:")
     print("  1. Import WhatsApp Chats")
     print("  2. Import Facebook Messenger Chats")
     print("  3. Process iMessage Export")
     print("  4. Generate HTML Reports")
     print("  5. Exit")
-    print("="*70)
+    print("=" * 70)
 
     choice = input("\nEnter your choice: ").strip()
     return choice
+
 
 def process_and_import(parser, service_name, db_manager):
     """Handles parsing a source and inserting it into the database."""
@@ -271,6 +295,7 @@ def process_and_import(parser, service_name, db_manager):
         print("Insertion complete.")
     else:
         print("No messages found or an error occurred during parsing.")
+
 
 def imessage_submenu():
     """Handles iMessage processing with advanced options"""
@@ -288,15 +313,15 @@ def imessage_submenu():
 
         choice = input("Enter your choice: ").strip()
 
-        if choice == '1':
+        if choice == "1":
             imessage_quick_process(config)
-        elif choice == '2':
+        elif choice == "2":
             imessage_advanced_options(config)
-        elif choice == '3':
+        elif choice == "3":
             imessage_list_chats(config)
-        elif choice == '4':
+        elif choice == "4":
             imessage_diagnostics(config)
-        elif choice == '5':
+        elif choice == "5":
             return
         else:
             print("Invalid choice. Please try again.")
@@ -322,7 +347,9 @@ def imessage_quick_process(config):
     print(f"Workers: {max_workers}")
 
     # Ask for output file
-    output_file = input("Enter output JSON file path (e.g., ./output/imessage_export.json): ").strip()
+    output_file = input(
+        "Enter output JSON file path (e.g., ./output/imessage_export.json): "
+    ).strip()
     if not output_file:
         print("Output file is required.")
         return
@@ -339,7 +366,7 @@ def imessage_quick_process(config):
         db = iMessageDatabaseParser(
             db_path=db_path,
             enable_spam_filtering=enable_spam_filtering,
-            aggressive_spam_filtering=aggressive_spam_filtering
+            aggressive_spam_filtering=aggressive_spam_filtering,
         )
 
         # Get all messages
@@ -354,10 +381,10 @@ def imessage_quick_process(config):
 
         # Show spam filtering statistics
         spam_stats = db.get_spam_filtering_stats()
-        if spam_stats and spam_stats['total_suppressed'] > 0:
+        if spam_stats and spam_stats["total_suppressed"] > 0:
             print(f"Spam filtering removed {spam_stats['total_suppressed']:,} low-value messages:")
             for category, count in spam_stats.items():
-                if category != 'total_suppressed' and count > 0:
+                if category != "total_suppressed" and count > 0:
                     print(f"  - {category.replace('_', ' ').title()}: {count:,}")
 
         # Export to JSON
@@ -380,7 +407,9 @@ def imessage_advanced_options(config):
     print("\n--- Advanced iMessage Options ---")
 
     # Database path
-    default_db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
+    default_db_path = config.get_expanded_path(
+        "services.imessage.preferences.database.default_db_path"
+    )
     db_path = input(f"Database path (default: {default_db_path}): ").strip()
     if not db_path:
         db_path = default_db_path
@@ -406,15 +435,20 @@ def imessage_advanced_options(config):
         aggressive_spam_filtering = True
 
     # Performance settings
-    max_workers = int(input(f"Number of workers (default: {config.get('services.imessage.preferences.performance.workers', 4)}): ").strip() or config.get('services.imessage.preferences.performance.workers', 4))
+    max_workers = int(
+        input(
+            f"Number of workers (default: {config.get('services.imessage.preferences.performance.workers', 4)}): "
+        ).strip()
+        or config.get("services.imessage.preferences.performance.workers", 4)
+    )
 
     # Chat filter
-    chat_filter = input("Filter by specific chat ID (optional): ").strip()
-    chat_filter = int(chat_filter) if chat_filter else None
+    chat_filter_text = input("Filter by specific chat ID (optional): ").strip()
+    chat_filter = int(chat_filter_text) if chat_filter_text else None
 
     # Message limit
-    limit = input("Maximum messages to export (optional, default: all): ").strip()
-    limit = int(limit) if limit else None
+    limit_text = input("Maximum messages to export (optional, default: all): ").strip()
+    limit = int(limit_text) if limit_text else None
 
     # Output file
     output_file = input("Output JSON file path: ").strip()
@@ -423,13 +457,21 @@ def imessage_advanced_options(config):
         return
 
     # Attachment processing
-    process_attachments = input("Process attachments? (y/n, default: n): ").strip().lower() == 'y'
+    process_attachments = input("Process attachments? (y/n, default: n): ").strip().lower() == "y"
     attachments_dir = None
-    source_attachments_dir = config.get_expanded_path("services.imessage.preferences.database.default_attachments_path")
+    source_attachments_dir = config.get_expanded_path(
+        "services.imessage.preferences.database.default_attachments_path"
+    )
 
     if process_attachments:
-        attachments_dir = input(f"Attachments output directory (default: ./Attachments): ").strip() or "./Attachments"
-        source_attachments_dir = input(f"Source attachments directory (default: {source_attachments_dir}): ").strip() or source_attachments_dir
+        attachments_dir = (
+            input(f"Attachments output directory (default: ./Attachments): ").strip()
+            or "./Attachments"
+        )
+        source_attachments_dir = (
+            input(f"Source attachments directory (default: {source_attachments_dir}): ").strip()
+            or source_attachments_dir
+        )
 
     # Create output directory
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
@@ -441,7 +483,7 @@ def imessage_advanced_options(config):
             db_path=db_path,
             vcf_path=vcf_path,
             enable_spam_filtering=enable_spam_filtering,
-            aggressive_spam_filtering=aggressive_spam_filtering
+            aggressive_spam_filtering=aggressive_spam_filtering,
         )
 
         # Get messages
@@ -451,8 +493,7 @@ def imessage_advanced_options(config):
         else:
             print("Fetching all messages...")
             messages = db.get_all_messages_parallel(
-                chat_filter=chat_filter,
-                max_workers=max_workers
+                chat_filter=chat_filter, max_workers=max_workers
             )
 
         if not messages:
@@ -463,10 +504,10 @@ def imessage_advanced_options(config):
 
         # Show spam filtering statistics
         spam_stats = db.get_spam_filtering_stats()
-        if spam_stats and spam_stats['total_suppressed'] > 0:
+        if spam_stats and spam_stats["total_suppressed"] > 0:
             print(f"Spam filtering removed {spam_stats['total_suppressed']:,} low-value messages:")
             for category, count in spam_stats.items():
-                if category != 'total_suppressed' and count > 0:
+                if category != "total_suppressed" and count > 0:
                     print(f"  - {category.replace('_', ' ').title()}: {count:,}")
 
         # Export to JSON
@@ -475,7 +516,7 @@ def imessage_advanced_options(config):
             db,
             output_file,
             attachments_dir=attachments_dir,
-            source_attachments_dir=source_attachments_dir
+            source_attachments_dir=source_attachments_dir,
         )
 
         print(f"\n✅ Advanced processing complete!")
@@ -518,13 +559,13 @@ def imessage_diagnostics(config):
 
     choice = input("Enter your choice: ").strip()
 
-    if choice == '1':
+    if choice == "1":
         imessage_database_info(config)
-    elif choice == '2':
+    elif choice == "2":
         imessage_test_connection(config)
-    elif choice == '3':
+    elif choice == "3":
         imessage_spam_analysis(config)
-    elif choice == '4':
+    elif choice == "4":
         return
     else:
         print("Invalid choice.")
@@ -602,7 +643,7 @@ def imessage_spam_analysis(config):
         modes = [
             ("Disabled", False, False),
             ("Conservative", True, False),
-            ("Aggressive", True, True)
+            ("Aggressive", True, True),
         ]
 
         for mode_name, enable_filtering, aggressive in modes:
@@ -611,7 +652,7 @@ def imessage_spam_analysis(config):
             db = iMessageDatabaseParser(
                 db_path=db_path,
                 enable_spam_filtering=enable_filtering,
-                aggressive_spam_filtering=aggressive
+                aggressive_spam_filtering=aggressive,
             )
 
             # Get a sample of messages
@@ -619,10 +660,10 @@ def imessage_spam_analysis(config):
 
             spam_stats = db.get_spam_filtering_stats()
             if spam_stats:
-                total_suppressed = spam_stats['total_suppressed']
+                total_suppressed = spam_stats["total_suppressed"]
                 print(f"Messages suppressed: {total_suppressed:,}")
                 for category, count in spam_stats.items():
-                    if category != 'total_suppressed' and count > 0:
+                    if category != "total_suppressed" and count > 0:
                         print(f"  - {category.replace('_', ' ').title()}: {count:,}")
             else:
                 print("No spam filtering applied")
@@ -648,13 +689,16 @@ def generate_html_submenu(db_manager):
     else:
         print("No messages found in the database to generate a report.")
 
+
 def database_path(settings: Settings) -> Path:
     """The central database for this Chattr root: `<root>/Database/chattr.sqlite`."""
     return Path(settings.root) / "Database" / "chattr.sqlite"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="chattr-cli", description="Convert message exports into readable archives.")
+    parser = argparse.ArgumentParser(
+        prog="chattr-cli", description="Convert message exports into readable archives."
+    )
     parser.add_argument("--version", action="version", version=f"chattr {__version__}")
     parser.add_argument("--root", help="Chattr data folder (skips the first-run prompt)")
     return parser
@@ -674,6 +718,7 @@ def main(argv=None):
 
     # Log successful preflight (silent if structure already existed)
     import logging
+
     logging.basicConfig(level=logging.INFO)
     logging.info(f"Chattr initialized at: {chattr_root}")
 
@@ -696,24 +741,23 @@ def main(argv=None):
 
     while True:
         choice = main_menu()
-        
-        if choice == '1':
+
+        if choice == "1":
             process_and_import(WhatsAppParser(), "WhatsApp", db_manager)
-        elif choice == '2':
+        elif choice == "2":
             process_and_import(MessengerParser(), "Facebook Messenger", db_manager)
-        elif choice == '3':
+        elif choice == "3":
             imessage_submenu()
-        elif choice == '4':
+        elif choice == "4":
             generate_html_submenu(db_manager)
-        elif choice == '5':
+        elif choice == "5":
             print("Exiting.")
             return 0
         else:
             print("Invalid choice. Please try again.")
-        
+
         print("\n--------------------")
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

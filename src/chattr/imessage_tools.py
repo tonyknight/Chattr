@@ -3,8 +3,8 @@
 iMessage Database Analysis Tools
 ================================
 
-A consolidated menu-based tool for analyzing iMessage database patterns, attachments, 
-and message content. This tool combines multiple analysis scripts into a single 
+A consolidated menu-based tool for analyzing iMessage database patterns, attachments,
+and message content. This tool combines multiple analysis scripts into a single
 interface for comprehensive database investigation.
 
 Features:
@@ -37,9 +37,11 @@ from dataclasses import dataclass, asdict
 # Apple's timestamp epoch (January 1, 2001, 00:00:00 UTC)
 APPLE_EPOCH = datetime(2001, 1, 1)
 
+
 @dataclass
 class NullMessage:
     """Represents a message with null text for analysis"""
+
     # Basic message info
     rowid: int
     guid: str
@@ -50,19 +52,19 @@ class NullMessage:
     date: str
     is_from_me: bool
     is_read: bool
-    
+
     # Message type and classification
     item_type: int
     associated_message_type: int
     associated_message_guid: Optional[str]
     group_action_type: int
     message_action_type: int
-    
+
     # Content and metadata
     balloon_bundle_id: Optional[str]
     expressive_send_style_id: Optional[str]
     group_title: Optional[str]
-    
+
     # Status flags
     is_empty: bool
     is_system_message: bool
@@ -70,7 +72,7 @@ class NullMessage:
     is_delivered: bool
     is_sent: bool
     is_finished: bool
-    
+
     # Data fields
     has_attributed_body: bool
     attributed_body_length: int
@@ -78,22 +80,23 @@ class NullMessage:
     payload_data_length: int
     has_message_summary_info: bool
     message_summary_info_length: int
-    
+
     # Cache and attachment info
     cache_has_attachments: bool
     cache_roomnames: Optional[str]
-    
+
     # Chat info
     chat_id: Optional[int]
     chat_identifier: Optional[str]
     chat_display_name: Optional[str]
     chat_style: Optional[int]
 
+
 def convert_apple_timestamp(apple_timestamp: Optional[int]) -> Optional[datetime]:
     """Convert Apple timestamp (nanoseconds since 2001-01-01) to datetime"""
     if apple_timestamp is None or apple_timestamp == 0:
         return None
-    
+
     try:
         # Convert nanoseconds to seconds and add to Apple epoch
         timestamp_seconds = apple_timestamp / 1_000_000_000
@@ -101,15 +104,17 @@ def convert_apple_timestamp(apple_timestamp: Optional[int]) -> Optional[datetime
     except (ValueError, OverflowError):
         return None
 
+
 def apple_timestamp_to_datetime(timestamp: int) -> str:
     """Convert Apple timestamp to ISO format string"""
     if timestamp == 0:
         return "1970-01-01T00:00:00"
-    
+
     # Apple timestamps are nanoseconds since 2001-01-01
     apple_epoch = datetime(2001, 1, 1)
     dt = apple_epoch + timedelta(seconds=timestamp / 1_000_000_000)
     return dt.isoformat()
+
 
 def calculate_file_hash(file_path: str) -> Optional[str]:
     """Calculate SHA-256 hash of a file"""
@@ -123,13 +128,20 @@ def calculate_file_hash(file_path: str) -> Optional[str]:
     except (FileNotFoundError, PermissionError, OSError) as e:
         return f"ERROR: {str(e)}"
 
+
 class DatabaseDiagnostics:
     """Comprehensive database diagnostics for iMessage database health analysis"""
 
     def __init__(self, db_path: str, attachment_root: str = "~/Library/Messages/Attachments"):
         self.db_path = db_path
         self.attachment_root = attachment_root
-        self.conn = None
+        self.conn: Optional[sqlite3.Connection] = None
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        if self.conn is None:
+            raise RuntimeError("Database is not connected")
+        return self.conn
 
     def run_full_diagnostic(self):
         """Run the complete diagnostic suite (derived from imessage-exporter's diagnostics; see NOTICE)"""
@@ -171,7 +183,7 @@ class DatabaseDiagnostics:
             FROM handle
             WHERE person_centric_id IS NOT NULL
             """
-            cursor = self.conn.execute(query)
+            cursor = self._db.execute(query)
             duplicate_contacts = cursor.fetchone()[0]
 
             if duplicate_contacts > 0:
@@ -185,7 +197,7 @@ class DatabaseDiagnostics:
         try:
             # Total messages
             total_query = "SELECT COUNT(*) FROM message"
-            total_messages = self.conn.execute(total_query).fetchone()[0]
+            total_messages = self._db.execute(total_query).fetchone()[0]
 
             # Messages not associated with a chat (orphaned)
             orphaned_query = """
@@ -194,7 +206,7 @@ class DatabaseDiagnostics:
             LEFT JOIN chat_message_join as c ON m.rowid = c.message_id
             WHERE c.chat_id IS NULL
             """
-            orphaned_messages = self.conn.execute(orphaned_query).fetchone()[0]
+            orphaned_messages = self._db.execute(orphaned_query).fetchone()[0]
 
             # Messages in multiple chats
             multi_chat_query = """
@@ -208,7 +220,7 @@ class DatabaseDiagnostics:
             )
             """
             try:
-                multi_chat_messages = self.conn.execute(multi_chat_query).fetchone()[0]
+                multi_chat_messages = self._db.execute(multi_chat_query).fetchone()[0]
             except:
                 multi_chat_messages = 0
 
@@ -232,7 +244,7 @@ class DatabaseDiagnostics:
                    SUM(CASE WHEN filename IS NULL THEN 1 ELSE 0 END) as null_paths
             FROM attachment
             """
-            cursor = self.conn.execute(query)
+            cursor = self._db.execute(query)
             row = cursor.fetchone()
             total_attachments = row[0]
             total_bytes = row[1] or 0
@@ -246,7 +258,7 @@ class DatabaseDiagnostics:
             missing_files = 0
 
             file_query = "SELECT filename FROM attachment WHERE filename IS NOT NULL"
-            for (filename,) in self.conn.execute(file_query):
+            for (filename,) in self._db.execute(file_query):
                 file_path = self._resolve_attachment_path(filename)
                 try:
                     if os.path.exists(file_path):
@@ -281,7 +293,7 @@ class DatabaseDiagnostics:
             LEFT JOIN chat_handle_join ch ON c.rowid = ch.chat_id
             WHERE ch.handle_id IS NULL
             """
-            chats_no_handles = self.conn.execute(query).fetchone()[0]
+            chats_no_handles = self._db.execute(query).fetchone()[0]
 
             if chats_no_handles > 0:
                 print("Thread diagnostic data:")
@@ -305,7 +317,7 @@ class DatabaseDiagnostics:
                 SELECT COUNT(*) - COUNT(DISTINCT id)
                 FROM handle
                 """
-                duplicated_contacts = self.conn.execute(duplicate_contacts_query).fetchone()[0]
+                duplicated_contacts = self._db.execute(duplicate_contacts_query).fetchone()[0]
 
                 if duplicated_contacts > 0:
                     print(f"    Duplicated contacts: {duplicated_contacts}")
@@ -319,7 +331,7 @@ class DatabaseDiagnostics:
                 FROM chat
                 WHERE chat_identifier IS NOT NULL
                 """
-                duplicated_chats = self.conn.execute(duplicate_chats_query).fetchone()[0]
+                duplicated_chats = self._db.execute(duplicate_chats_query).fetchone()[0]
 
                 if duplicated_chats > 0:
                     print(f"    Duplicated chats: {duplicated_chats}")
@@ -368,14 +380,14 @@ class DatabaseDiagnostics:
             path_str = path_str.replace(default_root, self.attachment_root)
 
         # Expand tilde to home directory
-        if path_str.startswith('~'):
+        if path_str.startswith("~"):
             return os.path.expanduser(path_str)
 
         return path_str
 
     def _format_file_size(self, bytes_size: int) -> str:
         """Format file size in human readable format"""
-        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        units = ["B", "KB", "MB", "GB", "TB"]
         size = float(bytes_size)
         unit_index = 0
 
@@ -385,11 +397,12 @@ class DatabaseDiagnostics:
 
         return f"{size:.2f} {units[unit_index]}"
 
+
 def show_menu():
     """Display the main menu"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("🔍 iMessage Database Analysis Tools")
-    print("="*60)
+    print("=" * 60)
     print("1. Database Diagnostics (Comprehensive Health Analysis)")
     print("2. Generate Attachment Report (CSV with SHA-256)")
     print("3. Analyze Null Message Patterns (Spam Detection)")
@@ -397,7 +410,8 @@ def show_menu():
     print("5. Extract Null Messages (Full Database Export)")
     print("6. Analyze Remaining Null Messages (Filter Optimization)")
     print("7. Exit")
-    print("="*60)
+    print("=" * 60)
+
 
 def get_user_input(prompt: str, required: bool = True) -> str:
     """Get user input with validation"""
@@ -407,6 +421,7 @@ def get_user_input(prompt: str, required: bool = True) -> str:
             return value
         print("❌ This field is required. Please enter a value.")
 
+
 def validate_file_exists(file_path: str) -> bool:
     """Validate that a file exists"""
     expanded_path = os.path.expanduser(file_path)
@@ -415,13 +430,16 @@ def validate_file_exists(file_path: str) -> bool:
     print(f"❌ File not found: {expanded_path}")
     return False
 
+
 def get_default_db_path() -> str:
     """Get the default database path"""
     return "~/Library/Messages/chat.db"
 
+
 def get_default_attachment_path() -> str:
     """Get the default attachment path"""
     return "~/Library/Messages/Attachments"
+
 
 # Tool 1: Database Diagnostics
 def run_database_diagnostics():
@@ -429,7 +447,9 @@ def run_database_diagnostics():
     print("\n🔍 DATABASE DIAGNOSTICS")
     print("This tool runs comprehensive health analysis on the iMessage database.")
 
-    db_path = get_user_input("Enter path to iMessage database [~/Library/Messages/chat.db]: ", required=False)
+    db_path = get_user_input(
+        "Enter path to iMessage database [~/Library/Messages/chat.db]: ", required=False
+    )
     if not db_path:
         db_path = "~/Library/Messages/chat.db"
 
@@ -440,7 +460,9 @@ def run_database_diagnostics():
         print(f"❌ Database file not found: {db_path}")
         return
 
-    attachment_root = get_user_input("Enter attachment root directory [~/Library/Messages/Attachments]: ", required=False)
+    attachment_root = get_user_input(
+        "Enter attachment root directory [~/Library/Messages/Attachments]: ", required=False
+    )
     if not attachment_root:
         attachment_root = "~/Library/Messages/Attachments"
 
@@ -455,143 +477,151 @@ def run_database_diagnostics():
     except Exception as e:
         print(f"❌ Error running diagnostics: {e}")
 
+
 # Tool 3: Analyze Null Message Patterns
 def analyze_null_patterns():
     """Analyze null text messages to identify spam patterns"""
     print("\n🔍 NULL MESSAGE PATTERN ANALYSIS")
     print("This tool analyzes null messages from a JSON export to identify spam patterns.")
-    
+
     null_messages_file = get_user_input("Enter path to null messages JSON file: ")
     if not validate_file_exists(null_messages_file):
         return
-    
+
     print(f"Loading null messages from: {null_messages_file}")
-    
+
     try:
-        with open(null_messages_file, 'r') as f:
+        with open(null_messages_file, "r") as f:
             data = json.load(f)
-        
-        messages = data['messages']
+
+        messages = data["messages"]
         total_count = len(messages)
-        
+
         print(f"Analyzing {total_count:,} null text messages...")
         print(f"=" * 60)
-        
+
         # Basic categorization
-        categories = {
-            'system_messages': [],
-            'unread_messages': [],
-            'sms_messages': [],
-            'rcs_messages': [],
-            'item_type_4': [],  # Often spam/deleted
-            'has_attributed_body': [],
-            'potential_spam': []
+        categories: Dict[str, Any] = {
+            "system_messages": [],
+            "unread_messages": [],
+            "sms_messages": [],
+            "rcs_messages": [],
+            "item_type_4": [],  # Often spam/deleted
+            "has_attributed_body": [],
+            "potential_spam": [],
         }
-        
+
         # Pattern analysis
-        handle_frequency = Counter()
-        chat_frequency = Counter()
-        service_stats = Counter()
-        item_type_stats = Counter()
-        read_status_by_service = defaultdict(lambda: {'read': 0, 'unread': 0})
-        
+        handle_frequency: Counter[Any] = Counter()
+        chat_frequency: Counter[Any] = Counter()
+        service_stats: Counter[Any] = Counter()
+        item_type_stats: Counter[Any] = Counter()
+        read_status_by_service: defaultdict[Any, Dict[str, int]] = defaultdict(
+            lambda: {"read": 0, "unread": 0}
+        )
+
         for msg in messages:
             # Basic stats
-            service = msg['service']
-            item_type = msg['item_type']
-            is_read = msg['is_read']
-            handle_name = msg['handle_name']
-            chat_id = msg['chat_identifier']
-            
+            service = msg["service"]
+            item_type = msg["item_type"]
+            is_read = msg["is_read"]
+            handle_name = msg["handle_name"]
+            chat_id = msg["chat_identifier"]
+
             service_stats[service] += 1
             item_type_stats[item_type] += 1
-            
+
             if is_read:
-                read_status_by_service[service]['read'] += 1
+                read_status_by_service[service]["read"] += 1
             else:
-                read_status_by_service[service]['unread'] += 1
-            
+                read_status_by_service[service]["unread"] += 1
+
             if handle_name:
                 handle_frequency[handle_name] += 1
             if chat_id:
                 chat_frequency[chat_id] += 1
-            
+
             # Categorize messages
-            if msg['is_system_message'] or msg['is_service_message']:
-                categories['system_messages'].append(msg)
+            if msg["is_system_message"] or msg["is_service_message"]:
+                categories["system_messages"].append(msg)
             elif not is_read:
-                categories['unread_messages'].append(msg)
-            elif service == 'SMS':
-                categories['sms_messages'].append(msg)
-            elif service == 'RCS':
-                categories['rcs_messages'].append(msg)
+                categories["unread_messages"].append(msg)
+            elif service == "SMS":
+                categories["sms_messages"].append(msg)
+            elif service == "RCS":
+                categories["rcs_messages"].append(msg)
             elif item_type == 4:
-                categories['item_type_4'].append(msg)
-            elif msg['has_attributed_body']:
-                categories['has_attributed_body'].append(msg)
+                categories["item_type_4"].append(msg)
+            elif msg["has_attributed_body"]:
+                categories["has_attributed_body"].append(msg)
             else:
-                categories['potential_spam'].append(msg)
-        
+                categories["potential_spam"].append(msg)
+
         # Print analysis results
         print(f"SERVICE BREAKDOWN:")
         for service, count in service_stats.most_common():
             percentage = (count / total_count) * 100
             print(f"  {service}: {count:,} ({percentage:.1f}%)")
-        
+
         print(f"\nITEM TYPE BREAKDOWN:")
         for item_type, count in item_type_stats.most_common():
             percentage = (count / total_count) * 100
             print(f"  Type {item_type}: {count:,} ({percentage:.1f}%)")
-        
+
         print(f"\nREAD STATUS BY SERVICE:")
         for service in service_stats.keys():
-            read_count = read_status_by_service[service]['read']
-            unread_count = read_status_by_service[service]['unread']
+            read_count = read_status_by_service[service]["read"]
+            unread_count = read_status_by_service[service]["unread"]
             total_service = read_count + unread_count
             unread_pct = (unread_count / total_service) * 100 if total_service > 0 else 0
-            print(f"  {service}: {unread_count:,} unread / {total_service:,} total ({unread_pct:.1f}% unread)")
-        
+            print(
+                f"  {service}: {unread_count:,} unread / {total_service:,} total ({unread_pct:.1f}% unread)"
+            )
+
         print(f"\nCATEGORY BREAKDOWN:")
         for category, msgs in categories.items():
             count = len(msgs)
             percentage = (count / total_count) * 100
             print(f"  {category.replace('_', ' ').title()}: {count:,} ({percentage:.1f}%)")
-        
+
         # Export sample messages for manual review
         sample_output = {
-            'unread_sample': categories['unread_messages'][:50],
-            'item_type_4_sample': categories['item_type_4'][:50],
-            'potential_spam_sample': categories['potential_spam'][:50],
-            'high_frequency_senders': dict(handle_frequency.most_common(50))
+            "unread_sample": categories["unread_messages"][:50],
+            "item_type_4_sample": categories["item_type_4"][:50],
+            "potential_spam_sample": categories["potential_spam"][:50],
+            "high_frequency_senders": dict(handle_frequency.most_common(50)),
         }
-        
-        sample_file = null_messages_file.replace('.json', '_samples.json')
-        with open(sample_file, 'w') as f:
+
+        sample_file = null_messages_file.replace(".json", "_samples.json")
+        with open(sample_file, "w") as f:
             json.dump(sample_output, f, indent=2)
-        
+
         print(f"\n✅ Sample messages exported to: {sample_file}")
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
+
 
 # Tool 4: Database Search
 def database_search():
     """Generate search query for finding text in all database tables"""
     print("\n🔍 DATABASE SEARCH TOOL")
     print("This tool generates SQL queries to search for text across all database tables.")
-    
-    db_path = get_user_input(f"Enter database path (default: {get_default_db_path()}): ", required=False)
+
+    db_path = get_user_input(
+        f"Enter database path (default: {get_default_db_path()}): ", required=False
+    )
     if not db_path:
         db_path = get_default_db_path()
-    
+
     db_path = os.path.expanduser(db_path)
     if not validate_file_exists(db_path):
         return
-    
+
     search_string = get_user_input("Enter search string: ")
-    
+
     print(f"\nGenerating search query for: '{search_string}'")
-    
+
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -604,9 +634,9 @@ def database_search():
 
         for table_name_tuple in tables:
             table_name = table_name_tuple[0]
-            
+
             # Skip internal sqlite tables
-            if table_name.startswith('sqlite_'):
+            if table_name.startswith("sqlite_"):
                 continue
 
             # Get column names for the current table
@@ -615,7 +645,7 @@ def database_search():
 
             for column_info in columns:
                 column_name = column_info[1]
-                
+
                 # Construct the SELECT statement for each column
                 query_part = f"SELECT '{table_name}' AS table_name, '{column_name}' AS column_name, \"{column_name}\" FROM \"{table_name}\" WHERE \"{column_name}\" LIKE '%{search_string}%'"
                 union_all_queries.append(query_part)
@@ -628,26 +658,27 @@ def database_search():
 
         # Combine all individual queries with UNION ALL
         full_query = " UNION ALL ".join(union_all_queries)
-        
-        print("\n" + "="*80)
+
+        print("\n" + "=" * 80)
         print("📋 GENERATED SQL QUERY:")
-        print("="*80)
+        print("=" * 80)
         print("-- Copy and paste the following query into your SQLite tool:")
         print(full_query + ";")
-        print("="*80)
-        
+        print("=" * 80)
+
         # Optionally save to file
         save_query = input("\nSave query to file? (y/N): ").strip().lower()
-        if save_query == 'y':
+        if save_query == "y":
             query_file = f"search_query_{search_string.replace(' ', '_')}.sql"
-            with open(query_file, 'w') as f:
+            with open(query_file, "w") as f:
                 f.write(f"-- Search query for: {search_string}\n")
                 f.write(f"-- Generated: {datetime.now().isoformat()}\n\n")
                 f.write(full_query + ";")
             print(f"✅ Query saved to: {query_file}")
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
+
 
 # Tool 2: Generate Comprehensive Attachment Report
 def find_attachment_file(filename: str, attachment_root: str) -> Optional[Dict[str, Any]]:
@@ -670,11 +701,11 @@ def find_attachment_file(filename: str, attachment_root: str) -> Optional[Dict[s
         try:
             stat_info = os.stat(full_path)
             return {
-                'found': True,
-                'full_path': full_path,
-                'file_size': stat_info.st_size,
-                'modified_time': datetime.fromtimestamp(stat_info.st_mtime),
-                'sha256_hash': calculate_file_hash(full_path)
+                "found": True,
+                "full_path": full_path,
+                "file_size": stat_info.st_size,
+                "modified_time": datetime.fromtimestamp(stat_info.st_mtime),
+                "sha256_hash": calculate_file_hash(full_path),
             }
         except OSError:
             pass
@@ -688,11 +719,11 @@ def find_attachment_file(filename: str, attachment_root: str) -> Optional[Dict[s
                 try:
                     stat_info = os.stat(found_path)
                     return {
-                        'found': True,
-                        'full_path': found_path,
-                        'file_size': stat_info.st_size,
-                        'modified_time': datetime.fromtimestamp(stat_info.st_mtime),
-                        'sha256_hash': calculate_file_hash(found_path)
+                        "found": True,
+                        "full_path": found_path,
+                        "file_size": stat_info.st_size,
+                        "modified_time": datetime.fromtimestamp(stat_info.st_mtime),
+                        "sha256_hash": calculate_file_hash(found_path),
                     }
                 except OSError:
                     continue
@@ -700,12 +731,13 @@ def find_attachment_file(filename: str, attachment_root: str) -> Optional[Dict[s
         pass
 
     return {
-        'found': False,
-        'full_path': None,
-        'file_size': None,
-        'modified_time': None,
-        'sha256_hash': 'FILE_NOT_FOUND'
+        "found": False,
+        "full_path": None,
+        "file_size": None,
+        "modified_time": None,
+        "sha256_hash": "FILE_NOT_FOUND",
     }
+
 
 def generate_attachment_report():
     """
@@ -717,7 +749,9 @@ def generate_attachment_report():
     print("\n📎 COMPREHENSIVE ATTACHMENT REPORT GENERATOR")
     print("This tool creates a detailed CSV report of all attachments with complete metadata.")
 
-    db_path = get_user_input(f"Enter database path (default: {get_default_db_path()}): ", required=False)
+    db_path = get_user_input(
+        f"Enter database path (default: {get_default_db_path()}): ", required=False
+    )
     if not db_path:
         db_path = get_default_db_path()
 
@@ -725,7 +759,9 @@ def generate_attachment_report():
     if not validate_file_exists(db_path):
         return
 
-    attachment_root = get_user_input(f"Enter attachment root (default: {get_default_attachment_path()}): ", required=False)
+    attachment_root = get_user_input(
+        f"Enter attachment root (default: {get_default_attachment_path()}): ", required=False
+    )
     if not attachment_root:
         attachment_root = get_default_attachment_path()
 
@@ -734,7 +770,9 @@ def generate_attachment_report():
         print(f"❌ Attachment directory not found: {attachment_root}")
         return
 
-    output_csv = get_user_input("Enter output CSV filename (default: iMessage_attachment_report.csv): ", required=False)
+    output_csv = get_user_input(
+        "Enter output CSV filename (default: iMessage_attachment_report.csv): ", required=False
+    )
     if not output_csv:
         output_csv = "iMessage_attachment_report.csv"
 
@@ -805,29 +843,54 @@ def generate_attachment_report():
         # Prepare comprehensive CSV headers
         csv_headers = [
             # Attachment table fields
-            'attachment_rowid', 'attachment_guid', 'attachment_created_date', 'attachment_start_date',
-            'attachment_filename', 'attachment_uti', 'attachment_mime_type', 'attachment_transfer_state',
-            'attachment_is_outgoing', 'attachment_user_info', 'attachment_transfer_name', 'attachment_total_bytes',
-            'attachment_is_sticker', 'attachment_sticker_user_info', 'attachment_attribution_info',
-            'attachment_hide_attachment', 'attachment_ck_sync_state', 'attachment_ck_server_change_token_blob',
-            'attachment_ck_record_id', 'attachment_original_guid', 'attachment_is_commsafety_sensitive',
-            'attachment_emoji_image_content_identifier', 'attachment_emoji_image_short_description',
-            'attachment_preview_generation_state',
-
+            "attachment_rowid",
+            "attachment_guid",
+            "attachment_created_date",
+            "attachment_start_date",
+            "attachment_filename",
+            "attachment_uti",
+            "attachment_mime_type",
+            "attachment_transfer_state",
+            "attachment_is_outgoing",
+            "attachment_user_info",
+            "attachment_transfer_name",
+            "attachment_total_bytes",
+            "attachment_is_sticker",
+            "attachment_sticker_user_info",
+            "attachment_attribution_info",
+            "attachment_hide_attachment",
+            "attachment_ck_sync_state",
+            "attachment_ck_server_change_token_blob",
+            "attachment_ck_record_id",
+            "attachment_original_guid",
+            "attachment_is_commsafety_sensitive",
+            "attachment_emoji_image_content_identifier",
+            "attachment_emoji_image_short_description",
+            "attachment_preview_generation_state",
             # Message attachment join fields
-            'join_message_id', 'join_attachment_id',
-
+            "join_message_id",
+            "join_attachment_id",
             # Message fields (for context)
-            'message_rowid', 'message_guid', 'message_text_preview', 'message_date', 'message_date_read',
-            'message_date_delivered', 'message_is_from_me', 'message_is_read', 'message_service',
-
+            "message_rowid",
+            "message_guid",
+            "message_text_preview",
+            "message_date",
+            "message_date_read",
+            "message_date_delivered",
+            "message_is_from_me",
+            "message_is_read",
+            "message_service",
             # File system analysis
-            'file_found', 'file_full_path', 'file_size_bytes', 'file_modified_time', 'file_sha256_hash'
+            "file_found",
+            "file_full_path",
+            "file_size_bytes",
+            "file_modified_time",
+            "file_sha256_hash",
         ]
 
         print(f"� Writing comprehensive CSV report...")
 
-        with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
+        with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(csv_headers)
 
@@ -842,65 +905,94 @@ def generate_attachment_report():
                     print(f"  Processed {processed_count}/{len(rows)} attachments...")
 
                 # Skip Apple's proprietary plugin payload attachments
-                filename = row['attachment_filename']
-                if filename and filename.lower().endswith('.pluginpayloadattachment'):
+                filename = row["attachment_filename"]
+                if filename and filename.lower().endswith(".pluginpayloadattachment"):
                     skipped_count += 1
                     continue
 
                 # Convert timestamps
-                created_date = convert_apple_timestamp(row['attachment_created_date'])
-                start_date = convert_apple_timestamp(row['attachment_start_date'])
-                message_date = convert_apple_timestamp(row['message_date'])
-                message_date_read = convert_apple_timestamp(row['message_date_read'])
-                message_date_delivered = convert_apple_timestamp(row['message_date_delivered'])
+                created_date = convert_apple_timestamp(row["attachment_created_date"])
+                start_date = convert_apple_timestamp(row["attachment_start_date"])
+                message_date = convert_apple_timestamp(row["message_date"])
+                message_date_read = convert_apple_timestamp(row["message_date_read"])
+                message_date_delivered = convert_apple_timestamp(row["message_date_delivered"])
 
                 # Analyze file on disk
-                file_info = find_attachment_file(filename, attachment_root) if filename else {
-                    'found': False, 'full_path': None, 'file_size': None,
-                    'modified_time': None, 'sha256_hash': 'NO_FILENAME'
-                }
+                file_info: Optional[Dict[str, Any]] = (
+                    find_attachment_file(filename, attachment_root)
+                    if filename
+                    else {
+                        "found": False,
+                        "full_path": None,
+                        "file_size": None,
+                        "modified_time": None,
+                        "sha256_hash": "NO_FILENAME",
+                    }
+                )
 
-                if file_info and file_info['found']:
+                if file_info and file_info["found"]:
                     found_files += 1
-                    if file_info['file_size']:
-                        total_size += file_info['file_size']
+                    if file_info["file_size"]:
+                        total_size += file_info["file_size"]
 
                 # Truncate message text for preview
-                message_text = row['message_text']
-                message_text_preview = (message_text[:100] + '...') if message_text and len(message_text) > 100 else message_text
+                message_text = row["message_text"]
+                message_text_preview = (
+                    (message_text[:100] + "...")
+                    if message_text and len(message_text) > 100
+                    else message_text
+                )
 
                 # Write CSV row
                 csv_row = [
                     # Attachment fields
-                    row['attachment_rowid'], row['attachment_guid'],
+                    row["attachment_rowid"],
+                    row["attachment_guid"],
                     created_date.isoformat() if created_date else None,
                     start_date.isoformat() if start_date else None,
-                    row['attachment_filename'], row['attachment_uti'], row['attachment_mime_type'],
-                    row['attachment_transfer_state'], row['attachment_is_outgoing'], row['attachment_user_info'],
-                    row['attachment_transfer_name'], row['attachment_total_bytes'], row['attachment_is_sticker'],
-                    row['attachment_sticker_user_info'], row['attachment_attribution_info'],
-                    row['attachment_hide_attachment'], row['attachment_ck_sync_state'],
-                    row['attachment_ck_server_change_token_blob'], row['attachment_ck_record_id'],
-                    row['attachment_original_guid'], row['attachment_is_commsafety_sensitive'],
-                    row['attachment_emoji_image_content_identifier'], row['attachment_emoji_image_short_description'],
-                    row['attachment_preview_generation_state'],
-
+                    row["attachment_filename"],
+                    row["attachment_uti"],
+                    row["attachment_mime_type"],
+                    row["attachment_transfer_state"],
+                    row["attachment_is_outgoing"],
+                    row["attachment_user_info"],
+                    row["attachment_transfer_name"],
+                    row["attachment_total_bytes"],
+                    row["attachment_is_sticker"],
+                    row["attachment_sticker_user_info"],
+                    row["attachment_attribution_info"],
+                    row["attachment_hide_attachment"],
+                    row["attachment_ck_sync_state"],
+                    row["attachment_ck_server_change_token_blob"],
+                    row["attachment_ck_record_id"],
+                    row["attachment_original_guid"],
+                    row["attachment_is_commsafety_sensitive"],
+                    row["attachment_emoji_image_content_identifier"],
+                    row["attachment_emoji_image_short_description"],
+                    row["attachment_preview_generation_state"],
                     # Join fields
-                    row['join_message_id'], row['join_attachment_id'],
-
+                    row["join_message_id"],
+                    row["join_attachment_id"],
                     # Message fields
-                    row['message_rowid'], row['message_guid'], message_text_preview,
+                    row["message_rowid"],
+                    row["message_guid"],
+                    message_text_preview,
                     message_date.isoformat() if message_date else None,
                     message_date_read.isoformat() if message_date_read else None,
                     message_date_delivered.isoformat() if message_date_delivered else None,
-                    row['message_is_from_me'], row['message_is_read'], row['message_service'],
-
+                    row["message_is_from_me"],
+                    row["message_is_read"],
+                    row["message_service"],
                     # File system fields
-                    file_info['found'] if file_info else False,
-                    file_info['full_path'] if file_info else None,
-                    file_info['file_size'] if file_info else None,
-                    file_info['modified_time'].isoformat() if file_info and file_info['modified_time'] else None,
-                    file_info['sha256_hash'] if file_info else 'NO_FILENAME'
+                    file_info["found"] if file_info else False,
+                    file_info["full_path"] if file_info else None,
+                    file_info["file_size"] if file_info else None,
+                    (
+                        file_info["modified_time"].isoformat()
+                        if file_info and file_info["modified_time"]
+                        else None
+                    ),
+                    file_info["sha256_hash"] if file_info else "NO_FILENAME",
                 ]
 
                 writer.writerow(csv_row)
@@ -920,10 +1012,13 @@ def generate_attachment_report():
         print(f"Total size of found files: {total_size/1024/1024:.1f} MB")
         print(f"✅ CSV report saved to: {output_csv}")
         print(f"\n🎯 Use this data to plan your attachment processing strategy!")
-        print(f"💡 Plugin payload attachments ({skipped_count:,}) are automatically excluded from processing")
+        print(
+            f"💡 Plugin payload attachments ({skipped_count:,}) are automatically excluded from processing"
+        )
 
     except Exception as e:
         print(f"❌ Error: {e}")
+
 
 # Tool 5: Extract Null Messages
 def extract_null_messages():
@@ -931,7 +1026,9 @@ def extract_null_messages():
     print("\n📤 NULL MESSAGE EXTRACTOR")
     print("This tool extracts all messages with null text for comprehensive analysis.")
 
-    db_path = get_user_input(f"Enter database path (default: {get_default_db_path()}): ", required=False)
+    db_path = get_user_input(
+        f"Enter database path (default: {get_default_db_path()}): ", required=False
+    )
     if not db_path:
         db_path = get_default_db_path()
 
@@ -939,7 +1036,9 @@ def extract_null_messages():
     if not validate_file_exists(db_path):
         return
 
-    output_path = get_user_input("Enter output JSON filename (default: null_messages_export.json): ", required=False)
+    output_path = get_user_input(
+        "Enter output JSON filename (default: null_messages_export.json): ", required=False
+    )
     if not output_path:
         output_path = "null_messages_export.json"
 
@@ -975,59 +1074,55 @@ def extract_null_messages():
 
         for row in cursor:
             # Process data fields
-            attributed_body = row['attributedBody']
-            payload_data = row['payload_data']
-            message_summary_info = row['message_summary_info']
+            attributed_body = row["attributedBody"]
+            payload_data = row["payload_data"]
+            message_summary_info = row["message_summary_info"]
 
             null_message = NullMessage(
                 # Basic info
-                rowid=row['rowid'],
-                guid=row['guid'],
-                text=row['text'],
-                service=row['service'] or 'Unknown',
-                handle_id=row['handle_id'],
-                handle_name=row['handle_name'],
-                date=apple_timestamp_to_datetime(row['date'] or 0),
-                is_from_me=bool(row['is_from_me']),
-                is_read=bool(row['is_read']),
-
+                rowid=row["rowid"],
+                guid=row["guid"],
+                text=row["text"],
+                service=row["service"] or "Unknown",
+                handle_id=row["handle_id"],
+                handle_name=row["handle_name"],
+                date=apple_timestamp_to_datetime(row["date"] or 0),
+                is_from_me=bool(row["is_from_me"]),
+                is_read=bool(row["is_read"]),
                 # Message type
-                item_type=row['item_type'] or 0,
-                associated_message_type=row['associated_message_type'] or 0,
-                associated_message_guid=row['associated_message_guid'],
-                group_action_type=row['group_action_type'] or 0,
-                message_action_type=row['message_action_type'] or 0,
-
+                item_type=row["item_type"] or 0,
+                associated_message_type=row["associated_message_type"] or 0,
+                associated_message_guid=row["associated_message_guid"],
+                group_action_type=row["group_action_type"] or 0,
+                message_action_type=row["message_action_type"] or 0,
                 # Content
-                balloon_bundle_id=row['balloon_bundle_id'],
-                expressive_send_style_id=row['expressive_send_style_id'],
-                group_title=row['group_title'],
-
+                balloon_bundle_id=row["balloon_bundle_id"],
+                expressive_send_style_id=row["expressive_send_style_id"],
+                group_title=row["group_title"],
                 # Status
-                is_empty=bool(row['is_empty']),
-                is_system_message=bool(row['is_system_message']),
-                is_service_message=bool(row['is_service_message']),
-                is_delivered=bool(row['is_delivered']),
-                is_sent=bool(row['is_sent']),
-                is_finished=bool(row['is_finished']),
-
+                is_empty=bool(row["is_empty"]),
+                is_system_message=bool(row["is_system_message"]),
+                is_service_message=bool(row["is_service_message"]),
+                is_delivered=bool(row["is_delivered"]),
+                is_sent=bool(row["is_sent"]),
+                is_finished=bool(row["is_finished"]),
                 # Data fields
                 has_attributed_body=attributed_body is not None,
                 attributed_body_length=len(attributed_body) if attributed_body else 0,
                 has_payload_data=payload_data is not None,
                 payload_data_length=len(payload_data) if payload_data else 0,
                 has_message_summary_info=message_summary_info is not None,
-                message_summary_info_length=len(message_summary_info) if message_summary_info else 0,
-
+                message_summary_info_length=(
+                    len(message_summary_info) if message_summary_info else 0
+                ),
                 # Cache
-                cache_has_attachments=bool(row['cache_has_attachments']),
-                cache_roomnames=row['cache_roomnames'],
-
+                cache_has_attachments=bool(row["cache_has_attachments"]),
+                cache_roomnames=row["cache_roomnames"],
                 # Chat
-                chat_id=row['chat_id'],
-                chat_identifier=row['chat_identifier'],
-                chat_display_name=row['chat_display_name'],
-                chat_style=row['chat_style']
+                chat_id=row["chat_id"],
+                chat_identifier=row["chat_identifier"],
+                chat_display_name=row["chat_display_name"],
+                chat_style=row["chat_style"],
             )
 
             null_messages.append(null_message)
@@ -1044,13 +1139,13 @@ def extract_null_messages():
             "summary": {
                 "total_null_messages": len(null_messages),
                 "extraction_date": datetime.now().isoformat(),
-                "database_path": db_path
+                "database_path": db_path,
             },
-            "messages": messages_data
+            "messages": messages_data,
         }
 
         # Write to JSON file
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         print(f"✅ Exported to: {output_path}")
@@ -1059,8 +1154,8 @@ def extract_null_messages():
         print(f"\n=== BASIC STATISTICS ===")
 
         # Group by item_type
-        item_types = {}
-        services = {}
+        item_types: Dict[Any, int] = {}
+        services: Dict[Any, int] = {}
         is_read_stats = {"read": 0, "unread": 0}
         is_from_me_stats = {"from_me": 0, "from_others": 0}
 
@@ -1093,6 +1188,7 @@ def extract_null_messages():
     except Exception as e:
         print(f"❌ Error: {e}")
 
+
 # Tool 6: Analyze Remaining Null Messages
 def analyze_remaining_null_messages():
     """Extract and analyze the remaining null text messages from an export"""
@@ -1103,18 +1199,20 @@ def analyze_remaining_null_messages():
     if not validate_file_exists(export_file):
         return
 
-    output_file = get_user_input("Enter output analysis filename (default: remaining_null_analysis.json): ", required=False)
+    output_file = get_user_input(
+        "Enter output analysis filename (default: remaining_null_analysis.json): ", required=False
+    )
     if not output_file:
         output_file = "remaining_null_analysis.json"
 
     print(f"Loading messages from: {export_file}")
 
     try:
-        with open(export_file, 'r') as f:
+        with open(export_file, "r") as f:
             messages = json.load(f)
 
         # Find messages with null text
-        null_messages = [msg for msg in messages if msg.get('text') is None]
+        null_messages = [msg for msg in messages if msg.get("text") is None]
 
         print(f"Found {len(null_messages)} messages with null text out of {len(messages)} total")
 
@@ -1123,49 +1221,49 @@ def analyze_remaining_null_messages():
             return
 
         # Detailed pattern analysis
-        patterns = {
-            'service_patterns': Counter(),
-            'sender_patterns': Counter(),
-            'read_status': Counter(),
-            'service_read_combinations': Counter(),
+        patterns: Dict[str, Any] = {
+            "service_patterns": Counter(),
+            "sender_patterns": Counter(),
+            "read_status": Counter(),
+            "service_read_combinations": Counter(),
         }
 
         # Categorize messages for suppression analysis
-        suppression_categories = {
-            'rcs_unread_system': [],
-            'rcs_group_system': [],
-            'unknown_sender_unread': [],
-            'attachment_only': [],
-            'other_patterns': []
+        suppression_categories: Dict[str, Any] = {
+            "rcs_unread_system": [],
+            "rcs_group_system": [],
+            "unknown_sender_unread": [],
+            "attachment_only": [],
+            "other_patterns": [],
         }
 
         for msg in null_messages:
-            service = msg.get('service', 'Unknown')
-            sender = msg.get('sender', 'Unknown')
-            chat = msg.get('chat', 'Unknown')
-            is_read = msg.get('is_read', False)
-            is_from_me = msg.get('is_from_me', False)
-            has_attachments = len(msg.get('attachments', [])) > 0
-            has_tapbacks = len(msg.get('tapbacks', [])) > 0
+            service = msg.get("service", "Unknown")
+            sender = msg.get("sender", "Unknown")
+            chat = msg.get("chat", "Unknown")
+            is_read = msg.get("is_read", False)
+            is_from_me = msg.get("is_from_me", False)
+            has_attachments = len(msg.get("attachments", [])) > 0
+            has_tapbacks = len(msg.get("tapbacks", [])) > 0
 
             # Pattern analysis
-            patterns['service_patterns'][service] += 1
-            patterns['sender_patterns'][sender] += 1
-            patterns['read_status'][is_read] += 1
-            patterns['service_read_combinations'][f"{service}_{is_read}"] += 1
+            patterns["service_patterns"][service] += 1
+            patterns["sender_patterns"][sender] += 1
+            patterns["read_status"][is_read] += 1
+            patterns["service_read_combinations"][f"{service}_{is_read}"] += 1
 
             # Categorize for suppression analysis
-            if service == 'RCS' and not is_read:
-                if sender == 'Unknown':
-                    suppression_categories['rcs_unread_system'].append(msg)
+            if service == "RCS" and not is_read:
+                if sender == "Unknown":
+                    suppression_categories["rcs_unread_system"].append(msg)
                 else:
-                    suppression_categories['rcs_group_system'].append(msg)
-            elif sender == 'Unknown' and not is_read:
-                suppression_categories['unknown_sender_unread'].append(msg)
+                    suppression_categories["rcs_group_system"].append(msg)
+            elif sender == "Unknown" and not is_read:
+                suppression_categories["unknown_sender_unread"].append(msg)
             elif has_attachments and not has_tapbacks:
-                suppression_categories['attachment_only'].append(msg)
+                suppression_categories["attachment_only"].append(msg)
             else:
-                suppression_categories['other_patterns'].append(msg)
+                suppression_categories["other_patterns"].append(msg)
 
         # Print analysis
         print(f"\n{'='*60}")
@@ -1173,17 +1271,17 @@ def analyze_remaining_null_messages():
         print(f"{'='*60}")
 
         print(f"\nSERVICE BREAKDOWN:")
-        for service, count in patterns['service_patterns'].most_common():
+        for service, count in patterns["service_patterns"].most_common():
             percentage = (count / len(null_messages)) * 100
             print(f"  {service}: {count} ({percentage:.1f}%)")
 
         print(f"\nREAD STATUS:")
-        for status, count in patterns['read_status'].most_common():
+        for status, count in patterns["read_status"].most_common():
             percentage = (count / len(null_messages)) * 100
             print(f"  {'Read' if status else 'Unread'}: {count} ({percentage:.1f}%)")
 
         print(f"\nTOP SENDERS:")
-        for sender, count in patterns['sender_patterns'].most_common(10):
+        for sender, count in patterns["sender_patterns"].most_common(10):
             percentage = (count / len(null_messages)) * 100
             print(f"  {sender}: {count} ({percentage:.1f}%)")
 
@@ -1198,7 +1296,9 @@ def analyze_remaining_null_messages():
             total_suppressible += count
             print(f"{category.replace('_', ' ').title()}: {count} ({percentage:.1f}%)")
 
-        print(f"\nTotal potentially suppressible: {total_suppressible} ({(total_suppressible/len(null_messages))*100:.1f}%)")
+        print(
+            f"\nTotal potentially suppressible: {total_suppressible} ({(total_suppressible/len(null_messages))*100:.1f}%)"
+        )
         print(f"Remaining for manual review: {len(null_messages) - total_suppressible}")
 
         # Create output data
@@ -1208,28 +1308,29 @@ def analyze_remaining_null_messages():
                 "analysis_date": datetime.now().isoformat(),
                 "source_file": export_file,
                 "patterns": {
-                    "services": dict(patterns['service_patterns']),
-                    "read_status": dict(patterns['read_status']),
-                    "top_senders": dict(patterns['sender_patterns'].most_common(20)),
+                    "services": dict(patterns["service_patterns"]),
+                    "read_status": dict(patterns["read_status"]),
+                    "top_senders": dict(patterns["sender_patterns"].most_common(20)),
                 },
                 "suppression_categories": {
                     category: len(msgs) for category, msgs in suppression_categories.items()
-                }
+                },
             },
             "messages_by_category": {
                 category: msgs for category, msgs in suppression_categories.items()
             },
-            "all_null_messages": null_messages
+            "all_null_messages": null_messages,
         }
 
         # Write to output file
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         print(f"\n✅ Detailed analysis exported to: {output_file}")
 
     except Exception as e:
         print(f"❌ Error: {e}")
+
 
 def main():
     """Main menu loop"""
@@ -1242,19 +1343,19 @@ def main():
         try:
             choice = input("\nSelect an option (1-7): ").strip()
 
-            if choice == '1':
+            if choice == "1":
                 run_database_diagnostics()
-            elif choice == '2':
+            elif choice == "2":
                 generate_attachment_report()
-            elif choice == '3':
+            elif choice == "3":
                 analyze_null_patterns()
-            elif choice == '4':
+            elif choice == "4":
                 database_search()
-            elif choice == '5':
+            elif choice == "5":
                 extract_null_messages()
-            elif choice == '6':
+            elif choice == "6":
                 analyze_remaining_null_messages()
-            elif choice == '7':
+            elif choice == "7":
                 print("\n👋 Goodbye!")
                 break
             else:
@@ -1268,6 +1369,7 @@ def main():
 
         # Pause before returning to menu
         input("\nPress Enter to continue...")
+
 
 if __name__ == "__main__":
     main()

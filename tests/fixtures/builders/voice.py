@@ -45,8 +45,8 @@ def _vcard(phone: str, name: str, cls: str = "sender vcard") -> str:
 
 def _page(title: str, body: str) -> str:
     return (
-        "<?xml version=\"1.0\" ?>\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
-        "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+        '<?xml version="1.0" ?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n'
         f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{html.escape(title)}</title>'
         f"</head><body>{body}</body></html>\n"
     )
@@ -65,8 +65,9 @@ def _text_page(who: family.Person, entries: list[tuple[datetime, bool, str]]) ->
     return _page(who.name, body)
 
 
-def _call_page(kind: str, label: str, phone: str, name: str, moment: datetime,
-               seconds: int, extra: str = "") -> str:
+def _call_page(
+    kind: str, label: str, phone: str, name: str, moment: datetime, seconds: int, extra: str = ""
+) -> str:
     minutes, secs = divmod(seconds, 60)
     duration = f"PT{minutes}M{secs}S" if minutes else f"PT{secs}S"
     body = (
@@ -95,19 +96,24 @@ def build_google_voice(out_dir: Path) -> Path:
 
     received = family.at(2018, 9, 5, 20, 2, 0)
     (calls / f"{ana.name} - Received - {_utc_stamp(received)}.html").write_text(
-        _call_page("Received", f"Received call from {ana.name}", ana.phones[0], ana.name,
-                   received, 312), encoding="utf-8")
+        _call_page(
+            "Received", f"Received call from {ana.name}", ana.phones[0], ana.name, received, 312
+        ),
+        encoding="utf-8",
+    )
 
     placed = family.at(2018, 9, 6, 8, 15, 30)
     (calls / f"{ana.name} - Placed - {_utc_stamp(placed)}.html").write_text(
-        _call_page("Placed", f"Placed call to {ana.name}", ana.phones[0], ana.name,
-                   placed, 95), encoding="utf-8")
+        _call_page("Placed", f"Placed call to {ana.name}", ana.phones[0], ana.name, placed, 95),
+        encoding="utf-8",
+    )
 
     missed = family.at(2018, 9, 7, 13, 0, 5)
     unknown = family.UNKNOWN_HANDLE
     (calls / f"{unknown} - Missed - {_utc_stamp(missed)}.html").write_text(
         _call_page("Missed", f"Missed call from {unknown}", unknown, unknown, missed, 0),
-        encoding="utf-8")
+        encoding="utf-8",
+    )
 
     voicemail = family.at(2018, 9, 8, 10, 22, 45)
     base = f"{ana.name} - Voicemail - {_utc_stamp(voicemail)}"
@@ -119,8 +125,11 @@ def build_google_voice(out_dir: Path) -> Path:
         f'<a rel="enclosure" href="{html.escape(base)}.mp3">Audio</a></audio>'
     )
     (calls / f"{base}.html").write_text(
-        _call_page("Voicemail", f"Voicemail from {ana.name}", ana.phones[0], ana.name,
-                   voicemail, 18, extra), encoding="utf-8")
+        _call_page(
+            "Voicemail", f"Voicemail from {ana.name}", ana.phones[0], ana.name, voicemail, 18, extra
+        ),
+        encoding="utf-8",
+    )
     return calls
 
 
@@ -133,17 +142,20 @@ def build_iphone_voicemail(out_dir: Path) -> Path:
         db.unlink()
     conn = sqlite3.connect(db)
     try:
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE TABLE voicemail (
                 ROWID INTEGER PRIMARY KEY AUTOINCREMENT, remote_uid INTEGER, date INTEGER,
                 token TEXT, sender TEXT, callback_num TEXT, duration INTEGER,
                 expiration INTEGER, trashed_date INTEGER, flags INTEGER
             );
-            """
-        )
+            """)
         entries = [
-            (family.JOAO.phones[0], family.at(2021, 12, 24, 19, 30, tz=family.TZ_LISBON), 22, 440.0),
+            (
+                family.JOAO.phones[0],
+                family.at(2021, 12, 24, 19, 30, tz=family.TZ_LISBON),
+                22,
+                440.0,
+            ),
             (family.ANA.phones[0], family.at(2022, 6, 14, 9, 5), 14, 520.0),
         ]
         for uid, (sender, moment, seconds, hz) in enumerate(entries, start=1):
@@ -151,8 +163,14 @@ def build_iphone_voicemail(out_dir: Path) -> Path:
             cur = conn.execute(
                 "INSERT INTO voicemail (remote_uid, date, token, sender, callback_num, duration, "
                 "expiration, trashed_date, flags) VALUES (?, ?, 'Complete', ?, ?, ?, ?, 0, 2)",
-                (uid, unix, sender, sender, seconds,
-                 unix + int(timedelta(days=30).total_seconds())),
+                (
+                    uid,
+                    unix,
+                    sender,
+                    sender,
+                    seconds,
+                    unix + int(timedelta(days=30).total_seconds()),
+                ),
             )
             (folder / f"{cur.lastrowid}.amr").write_bytes(wav(seconds=0.4, hz=hz))
         conn.commit()

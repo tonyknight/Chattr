@@ -69,8 +69,9 @@ TZ_EAST = timezone(timedelta(hours=-5))  # owner's home, US Eastern standard tim
 TZ_LISBON = timezone(timedelta(hours=0))  # João lives in Lisbon (winter, UTC+0)
 
 
-def at(year: int, month: int, day: int, hour: int, minute: int, second: int = 0,
-       tz: timezone = TZ_EAST) -> datetime:
+def at(
+    year: int, month: int, day: int, hour: int, minute: int, second: int = 0, tz: timezone = TZ_EAST
+) -> datetime:
     """A fixed, timezone-aware moment in the family's history."""
     return datetime(year, month, day, hour, minute, second, tzinfo=tz)
 

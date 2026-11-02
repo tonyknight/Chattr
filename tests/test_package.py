@@ -63,6 +63,8 @@ def test_no_bare_chattr_script_shadows_the_linux_tool() -> None:
     """`chattr` is a standard Linux command (e2fsprogs); Chattr must not install one."""
     from importlib.metadata import entry_points
 
-    scripts = {ep.name for ep in entry_points(group="console_scripts") if ep.value.startswith("chattr.")}
+    scripts = {
+        ep.name for ep in entry_points(group="console_scripts") if ep.value.startswith("chattr.")
+    }
     assert "chattr-cli" in scripts
     assert "chattr" not in scripts

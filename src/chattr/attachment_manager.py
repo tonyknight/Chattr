@@ -57,6 +57,7 @@ import tempfile
 
 try:
     from PIL import Image, ExifTags
+
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -64,6 +65,7 @@ except ImportError:
 
 try:
     from pillow_heif import register_heif_opener
+
     register_heif_opener()  # Register HEIC/HEIF support for Pillow
     HEIF_AVAILABLE = True
 except ImportError:
@@ -72,6 +74,7 @@ except ImportError:
 
 try:
     import ffmpeg
+
     FFMPEG_AVAILABLE = True
 except ImportError:
     FFMPEG_AVAILABLE = False
@@ -82,16 +85,17 @@ except ImportError:
 class AttachmentInfo:
     """
     Data structure representing an attachment with all necessary metadata
-    
+
     This class is designed to be easily portable to Swift as a struct
     """
+
     # Original attachment data
     original_path: str
     original_filename: str
     mime_type: Optional[str]
     file_size: int
     created_date: Optional[datetime]
-    
+
     # Processing results
     archival_path: Optional[str] = None
     archival_filename: Optional[str] = None
@@ -100,7 +104,7 @@ class AttachmentInfo:
     duplicate_of: Optional[str] = None
     conversion_applied: bool = False
     metadata_enhanced: bool = False
-    
+
     # Processing status
     processing_status: str = "pending"  # pending, processing, completed, failed
     error_message: Optional[str] = None
@@ -109,6 +113,7 @@ class AttachmentInfo:
 @dataclass
 class ProcessingStats:
     """Statistics tracking for attachment processing operations"""
+
     total_attachments: int = 0
     processed_successfully: int = 0
     failed_processing: int = 0
@@ -123,20 +128,30 @@ class ProcessingStats:
 class AttachmentProcessor:
     """
     Core attachment processing engine
-    
+
     Handles individual file operations including conversion, metadata enhancement,
     and archival naming. Designed with MVC pattern for Swift compatibility.
     """
-    
+
     def __init__(self, service_name: str = "iMessage"):
         self.service_name = service_name
-        self.supported_image_formats = {'.heic', '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.tif', '.bmp', '.webp'}
-        self.supported_video_formats = {'.mp4', '.mov', '.avi', '.mkv', '.wmv', '.3gp', '.webm'}
-        self.supported_audio_formats = {'.m4a', '.caf', '.mp3', '.wav', '.aac', '.flac'}
-        self.image_conversion_formats = {'.heic', '.png', '.webp'}  # Formats to convert to JPG
-        self.audio_conversion_formats = {'.caf'}  # Formats to convert to AAC
+        self.supported_image_formats = {
+            ".heic",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".tiff",
+            ".tif",
+            ".bmp",
+            ".webp",
+        }
+        self.supported_video_formats = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".3gp", ".webm"}
+        self.supported_audio_formats = {".m4a", ".caf", ".mp3", ".wav", ".aac", ".flac"}
+        self.image_conversion_formats = {".heic", ".png", ".webp"}  # Formats to convert to JPG
+        self.audio_conversion_formats = {".caf"}  # Formats to convert to AAC
         self.conversion_formats = self.image_conversion_formats | self.audio_conversion_formats
-        
+
     def calculate_file_hash(self, file_path: str) -> str:
         """Calculate SHA-256 hash of file for duplicate detection"""
         hash_sha256 = hashlib.sha256()
@@ -147,18 +162,21 @@ class AttachmentProcessor:
             return hash_sha256.hexdigest()
         except Exception as e:
             raise Exception(f"Failed to calculate hash for {file_path}: {e}")
-    
+
     def extract_exif_date(self, file_path: str) -> Optional[datetime]:
         """Extract DateTimeOriginal from EXIF data using ExifTool with robust parsing"""
         try:
             # Use ExifTool without format specification to get raw data
-            result = subprocess.run([
-                'exiftool', '-DateTimeOriginal', '-s3', file_path
-            ], capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                ["exiftool", "-DateTimeOriginal", "-s3", file_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
 
             if result.returncode == 0 and result.stdout.strip():
                 date_output = result.stdout.strip()
-                if date_output and date_output != '-':
+                if date_output and date_output != "-":
                     # Try to parse various date formats
                     return self._parse_exif_date_string(date_output)
         except Exception as e:
@@ -169,16 +187,16 @@ class AttachmentProcessor:
     def _parse_exif_date_string(self, date_str: str) -> Optional[datetime]:
         """Parse EXIF date string with multiple format support"""
         # Clean up the string - take only the first line if multiple lines exist
-        date_str = date_str.split('\n')[0].strip()
+        date_str = date_str.split("\n")[0].strip()
 
         # Common EXIF date formats to try
         date_formats = [
-            '%Y:%m:%d %H:%M:%S',      # Standard EXIF format: 2018:02:23 22:28:12
-            '%Y-%m-%d %H:%M:%S',      # ISO format: 2018-02-23 22:28:12
-            '%d.%m.%Y %H:%M:%S',      # European format: 04.03.2011 10:03:50
-            '%m/%d/%Y %H:%M:%S',      # US format: 03/04/2011 10:03:50
-            '%Y:%m:%d %H:%M:%S%z',    # With timezone
-            '%Y-%m-%d %H:%M:%S%z',    # ISO with timezone
+            "%Y:%m:%d %H:%M:%S",  # Standard EXIF format: 2018:02:23 22:28:12
+            "%Y-%m-%d %H:%M:%S",  # ISO format: 2018-02-23 22:28:12
+            "%d.%m.%Y %H:%M:%S",  # European format: 04.03.2011 10:03:50
+            "%m/%d/%Y %H:%M:%S",  # US format: 03/04/2011 10:03:50
+            "%Y:%m:%d %H:%M:%S%z",  # With timezone
+            "%Y-%m-%d %H:%M:%S%z",  # ISO with timezone
         ]
 
         for fmt in date_formats:
@@ -191,17 +209,18 @@ class AttachmentProcessor:
         import re
 
         # Try to find YYYY:MM:DD or YYYY-MM-DD pattern
-        date_match = re.search(r'(\d{4})[:-](\d{2})[:-](\d{2})', date_str)
+        date_match = re.search(r"(\d{4})[:-](\d{2})[:-](\d{2})", date_str)
         if date_match:
             year, month, day = date_match.groups()
 
             # Try to find time part
-            time_match = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', date_str)
+            time_match = re.search(r"(\d{1,2}):(\d{2}):(\d{2})", date_str)
             if time_match:
                 hour, minute, second = time_match.groups()
                 try:
-                    return datetime(int(year), int(month), int(day),
-                                  int(hour), int(minute), int(second))
+                    return datetime(
+                        int(year), int(month), int(day), int(hour), int(minute), int(second)
+                    )
                 except ValueError:
                     pass
 
@@ -213,20 +232,23 @@ class AttachmentProcessor:
 
         print(f"Warning: Could not parse EXIF date format: '{date_str}'")
         return None
-    
+
     def embed_exif_date(self, file_path: str, date_time: datetime) -> bool:
         """Embed DateTimeOriginal into file using ExifTool"""
         try:
-            date_str = date_time.strftime('%Y:%m:%d %H:%M:%S')
-            result = subprocess.run([
-                'exiftool', '-overwrite_original', f'-DateTimeOriginal={date_str}', file_path
-            ], capture_output=True, text=True, timeout=30)
-            
+            date_str = date_time.strftime("%Y:%m:%d %H:%M:%S")
+            result = subprocess.run(
+                ["exiftool", "-overwrite_original", f"-DateTimeOriginal={date_str}", file_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
             return result.returncode == 0
         except Exception as e:
             print(f"Warning: Failed to embed EXIF date in {file_path}: {e}")
             return False
-    
+
     def _validate_image_file(self, file_path: str) -> bool:
         """Validate that an image file can be opened and read"""
         if not PIL_AVAILABLE:
@@ -234,7 +256,7 @@ class AttachmentProcessor:
 
         # Check if it's a HEIC file and we don't have HEIF support
         file_ext = Path(file_path).suffix.lower()
-        if file_ext in ['.heic', '.heif'] and not HEIF_AVAILABLE:
+        if file_ext in [".heic", ".heif"] and not HEIF_AVAILABLE:
             print(f"Warning: HEIC file {file_path} requires pillow-heif library")
             return False
 
@@ -247,7 +269,7 @@ class AttachmentProcessor:
                     return True
         except Exception as e:
             # Provide more specific error information for HEIC files
-            if file_ext in ['.heic', '.heif']:
+            if file_ext in [".heic", ".heif"]:
                 print(f"Warning: HEIC file validation failed for {file_path}: {e}")
                 if not HEIF_AVAILABLE:
                     print("  → Install pillow-heif: pip install pillow-heif")
@@ -262,39 +284,44 @@ class AttachmentProcessor:
 
         # Check for HEIC files specifically
         file_ext = Path(input_path).suffix.lower()
-        if file_ext in ['.heic', '.heif'] and not HEIF_AVAILABLE:
+        if file_ext in [".heic", ".heif"] and not HEIF_AVAILABLE:
             print(f"Warning: Cannot convert HEIC file {input_path} - pillow-heif not available")
             print("  → Install with: pip install pillow-heif")
             return False
 
         # Pre-validate the image file
         if not self._validate_image_file(input_path):
-            print(f"Warning: Image file validation failed for {input_path} (corrupted or unreadable)")
+            print(
+                f"Warning: Image file validation failed for {input_path} (corrupted or unreadable)"
+            )
             return False
 
         try:
-            with Image.open(input_path) as img:
+            with Image.open(input_path) as opened:
+                img: Image.Image = opened
                 # For HEIC files, ensure we handle them properly
-                if file_ext in ['.heic', '.heif']:
+                if file_ext in [".heic", ".heif"]:
                     print(f"Converting HEIC file: {Path(input_path).name}")
 
                 # Convert to RGB if necessary (for HEIC/PNG/WebP with transparency)
-                if img.mode in ('RGBA', 'LA', 'P'):
+                if img.mode in ("RGBA", "LA", "P"):
                     # Create white background for transparency
-                    background = Image.new('RGB', img.size, (255, 255, 255))
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                    background = Image.new("RGB", img.size, (255, 255, 255))
+                    if img.mode == "P":
+                        img = img.convert("RGBA")
+                    background.paste(
+                        img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None
+                    )
                     img = background
-                elif img.mode != 'RGB':
-                    img = img.convert('RGB')
+                elif img.mode != "RGB":
+                    img = img.convert("RGB")
 
                 # Save as JPG with specified quality
-                img.save(output_path, 'JPEG', quality=quality, optimize=True)
+                img.save(output_path, "JPEG", quality=quality, optimize=True)
                 return True
         except Exception as e:
             # Provide specific guidance for HEIC conversion failures
-            if file_ext in ['.heic', '.heif']:
+            if file_ext in [".heic", ".heif"]:
                 print(f"Warning: HEIC conversion failed for {input_path}: {e}")
                 if not HEIF_AVAILABLE:
                     print("  → This likely requires: pip install pillow-heif")
@@ -313,9 +340,8 @@ class AttachmentProcessor:
             # -b:a 128k sets a reasonable bitrate for good quality
             # -movflags +faststart optimizes for streaming
             (
-                ffmpeg
-                .input(input_path)
-                .output(output_path, acodec='aac', audio_bitrate='128k', movflags='+faststart')
+                ffmpeg.input(input_path)
+                .output(output_path, acodec="aac", audio_bitrate="128k", movflags="+faststart")
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
@@ -328,74 +354,79 @@ class AttachmentProcessor:
         """Generate standardized archival filename based on date and type"""
         # Extract file extension
         original_ext = Path(attachment.original_filename).suffix.lower()
-        
+
         # Determine target extension based on conversion rules
         if original_ext in self.image_conversion_formats:
-            target_ext = '.jpg'
+            target_ext = ".jpg"
         elif original_ext in self.audio_conversion_formats:
-            target_ext = '.aac'
+            target_ext = ".aac"
         else:
             target_ext = original_ext
-        
+
         # Check if we have milliseconds in the date (from EXIF or message timestamp)
         if target_date.microsecond > 0:
             # Format with milliseconds
             milliseconds = target_date.microsecond // 1000
-            date_part = target_date.strftime('(%Y-%m-%d) %H-%M-%S')
+            date_part = target_date.strftime("(%Y-%m-%d) %H-%M-%S")
             filename = f"{date_part} [{milliseconds:03d}]{target_ext}"
         else:
             # Format without milliseconds
-            filename = target_date.strftime('(%Y-%m-%d) %H-%M-%S') + target_ext
-        
+            filename = target_date.strftime("(%Y-%m-%d) %H-%M-%S") + target_ext
+
         # For non-image/video files, prepend date to original filename
-        if (original_ext not in self.supported_image_formats and 
-            original_ext not in self.supported_video_formats):
-            date_prefix = target_date.strftime('(%Y-%m-%d) %H-%M-%S ')
+        if (
+            original_ext not in self.supported_image_formats
+            and original_ext not in self.supported_video_formats
+        ):
+            date_prefix = target_date.strftime("(%Y-%m-%d) %H-%M-%S ")
             original_name = Path(attachment.original_filename).stem
             filename = f"{date_prefix}{original_name}{target_ext}"
-        
+
         return filename
-    
-    def generate_archival_path(self, attachment: AttachmentInfo, target_date: datetime, 
-                             base_attachments_dir: str) -> Tuple[str, str]:
+
+    def generate_archival_path(
+        self, attachment: AttachmentInfo, target_date: datetime, base_attachments_dir: str
+    ) -> Tuple[str, str]:
         """Generate full archival path and filename"""
         # Create year and month folder structure
         year = target_date.year
         month_num = target_date.month
-        month_name = target_date.strftime('%B')
-        
+        month_name = target_date.strftime("%B")
+
         # Create folder structure: /Attachments/{service}/{year}/{month_number} - {month_name}/
         folder_path = os.path.join(
-            base_attachments_dir,
-            self.service_name,
-            str(year),
-            f"{month_num} - {month_name}"
+            base_attachments_dir, self.service_name, str(year), f"{month_num} - {month_name}"
         )
-        
+
         # Generate filename
         filename = self.generate_archival_filename(attachment, target_date)
-        
+
         # Full path
         full_path = os.path.join(folder_path, filename)
-        
+
         return folder_path, full_path
 
 
 class AttachmentManager:
     """
     Main attachment management controller
-    
+
     Orchestrates the entire attachment processing pipeline with support for
     multiple messaging services, parallel processing, and comprehensive statistics.
-    
+
     Designed with MVC architecture for easy Swift porting.
     """
-    
-    def __init__(self, base_attachments_dir: str, service_name: str = "iMessage", 
-                 move_files: bool = False, max_workers: int = 4):
+
+    def __init__(
+        self,
+        base_attachments_dir: str,
+        service_name: str = "iMessage",
+        move_files: bool = False,
+        max_workers: int = 4,
+    ):
         """
         Initialize AttachmentManager
-        
+
         Args:
             base_attachments_dir: Root directory for archival attachments
             service_name: Name of messaging service (iMessage, WhatsApp, etc.)
@@ -406,27 +437,28 @@ class AttachmentManager:
         self.service_name = service_name
         self.move_files = move_files
         self.max_workers = max_workers
-        
+
         # Initialize processor
         self.processor = AttachmentProcessor(service_name)
-        
+
         # Duplicate tracking
         self.hash_to_path: Dict[str, str] = {}
         self.processed_hashes: Dict[str, AttachmentInfo] = {}
-        
+
         # Statistics
         self.stats = ProcessingStats()
-        
+
         # Ensure base directory exists
         self.base_attachments_dir.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"AttachmentManager initialized for {service_name}")
         print(f"Base directory: {base_attachments_dir}")
         print(f"Mode: {'MOVE' if move_files else 'COPY'} files")
         print(f"Workers: {max_workers}")
 
-    def process_single_attachment(self, attachment: AttachmentInfo,
-                                message_date: datetime) -> AttachmentInfo:
+    def process_single_attachment(
+        self, attachment: AttachmentInfo, message_date: datetime
+    ) -> AttachmentInfo:
         """
         Process a single attachment through the complete pipeline
 
@@ -441,9 +473,11 @@ class AttachmentManager:
 
         try:
             # Step 0: Skip Apple's proprietary plugin payload attachments
-            if attachment.original_filename.lower().endswith('.pluginpayloadattachment'):
+            if attachment.original_filename.lower().endswith(".pluginpayloadattachment"):
                 attachment.processing_status = "skipped"
-                attachment.error_message = "Apple proprietary blob format - not suitable for archival"
+                attachment.error_message = (
+                    "Apple proprietary blob format - not suitable for archival"
+                )
                 self.stats.skipped_processing += 1
                 return attachment
 
@@ -486,10 +520,14 @@ class AttachmentManager:
 
                 if original_ext in self.processor.image_conversion_formats:
                     # Convert image to JPG
-                    conversion_success = self.processor.convert_image_to_jpg(attachment.original_path, temp_path)
+                    conversion_success = self.processor.convert_image_to_jpg(
+                        attachment.original_path, temp_path
+                    )
                 elif original_ext in self.processor.audio_conversion_formats:
                     # Convert audio to AAC
-                    conversion_success = self.processor.convert_caf_to_aac(attachment.original_path, temp_path)
+                    conversion_success = self.processor.convert_caf_to_aac(
+                        attachment.original_path, temp_path
+                    )
 
                 if conversion_success:
                     attachment.conversion_applied = True
@@ -514,7 +552,9 @@ class AttachmentManager:
                     self.stats.metadata_enhanced += 1
 
             # Step 10: Update attachment info
-            attachment.archival_path = os.path.relpath(full_archival_path, self.base_attachments_dir)
+            attachment.archival_path = os.path.relpath(
+                full_archival_path, self.base_attachments_dir
+            )
             attachment.archival_filename = os.path.basename(full_archival_path)
             attachment.processing_status = "completed"
 
@@ -532,8 +572,9 @@ class AttachmentManager:
 
         return attachment
 
-    def create_symlink_for_duplicate(self, duplicate_attachment: AttachmentInfo,
-                                   target_date: datetime) -> bool:
+    def create_symlink_for_duplicate(
+        self, duplicate_attachment: AttachmentInfo, target_date: datetime
+    ) -> bool:
         """Create symlink for duplicate file in appropriate date folder with conflict resolution"""
         try:
             if not duplicate_attachment.duplicate_of:
@@ -560,17 +601,23 @@ class AttachmentManager:
 
                 # Prevent infinite loop
                 if counter > 1000:
-                    print(f"Warning: Too many duplicate conflicts for {duplicate_attachment.original_filename}")
+                    print(
+                        f"Warning: Too many duplicate conflicts for {duplicate_attachment.original_filename}"
+                    )
                     return False
 
             # Create relative symlink to original file
-            original_path = os.path.join(str(self.base_attachments_dir), duplicate_attachment.duplicate_of)
+            original_path = os.path.join(
+                str(self.base_attachments_dir), duplicate_attachment.duplicate_of
+            )
             relative_path = os.path.relpath(original_path, folder_path)
 
             os.symlink(relative_path, symlink_path)
 
             # Update duplicate attachment info
-            duplicate_attachment.archival_path = os.path.relpath(symlink_path, self.base_attachments_dir)
+            duplicate_attachment.archival_path = os.path.relpath(
+                symlink_path, self.base_attachments_dir
+            )
             duplicate_attachment.archival_filename = os.path.basename(symlink_path)
 
             return True
@@ -579,7 +626,9 @@ class AttachmentManager:
             print(f"Warning: Failed to create symlink for duplicate: {e}")
             return False
 
-    def process_attachments_parallel(self, attachments_with_dates: List[Tuple[AttachmentInfo, datetime]]) -> List[AttachmentInfo]:
+    def process_attachments_parallel(
+        self, attachments_with_dates: List[Tuple[AttachmentInfo, datetime]]
+    ) -> List[AttachmentInfo]:
         """
         Process multiple attachments in parallel with progress tracking
 
@@ -592,7 +641,9 @@ class AttachmentManager:
         if not attachments_with_dates:
             return []
 
-        print(f"Processing {len(attachments_with_dates):,} attachments with {self.max_workers} workers...")
+        print(
+            f"Processing {len(attachments_with_dates):,} attachments with {self.max_workers} workers..."
+        )
 
         # Initialize statistics
         self.stats.total_attachments = len(attachments_with_dates)
@@ -605,7 +656,10 @@ class AttachmentManager:
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
             future_to_attachment = {
-                executor.submit(self.process_single_attachment, attachment, message_date): (attachment, message_date)
+                executor.submit(self.process_single_attachment, attachment, message_date): (
+                    attachment,
+                    message_date,
+                )
                 for attachment, message_date in attachments_with_dates
             }
 
@@ -662,8 +716,9 @@ class AttachmentManager:
             print(f"Throughput: {throughput:.1f} attachments/second")
 
 
-def create_attachment_info_from_message_attachment(attachment_dict: Dict[str, Any],
-                                                 source_attachments_dir: str) -> Optional[AttachmentInfo]:
+def create_attachment_info_from_message_attachment(
+    attachment_dict: Dict[str, Any], source_attachments_dir: str
+) -> Optional[AttachmentInfo]:
     """
     Create AttachmentInfo from message attachment dictionary
 
@@ -678,12 +733,12 @@ def create_attachment_info_from_message_attachment(attachment_dict: Dict[str, An
         AttachmentInfo object or None if attachment cannot be processed
     """
     try:
-        filename = attachment_dict.get('filename', '')
+        filename = attachment_dict.get("filename", "")
         if not filename:
             return None
 
         # Handle tilde expansion for iMessage paths
-        if filename.startswith('~/'):
+        if filename.startswith("~/"):
             original_path = os.path.expanduser(filename)
         else:
             original_path = os.path.join(source_attachments_dir, filename)
@@ -694,7 +749,7 @@ def create_attachment_info_from_message_attachment(attachment_dict: Dict[str, An
             return None
 
         # Extract file info
-        file_size = attachment_dict.get('file_size', 0)
+        file_size = attachment_dict.get("file_size", 0)
         if file_size == 0:
             file_size = os.path.getsize(original_path)
 
@@ -702,9 +757,9 @@ def create_attachment_info_from_message_attachment(attachment_dict: Dict[str, An
         return AttachmentInfo(
             original_path=original_path,
             original_filename=os.path.basename(filename),
-            mime_type=attachment_dict.get('mime_type'),
+            mime_type=attachment_dict.get("mime_type"),
             file_size=file_size,
-            created_date=None  # Will be determined from EXIF or message date
+            created_date=None,  # Will be determined from EXIF or message date
         )
 
     except Exception as e:

@@ -2,11 +2,13 @@ import json
 import datetime
 from chattr.parsers.base_parser import BaseParser
 
+
 def _fix_facebook_encoding(text):
     """Fixes the double-encoded strings from Facebook's JSON export."""
     if text is None:
         return ""
-    return text.encode('latin-1').decode('utf-8')
+    return text.encode("latin-1").decode("utf-8")
+
 
 class MessengerParser(BaseParser):
     """Parses exported Facebook Messenger chat .json files."""
@@ -30,7 +32,7 @@ class MessengerParser(BaseParser):
         except json.JSONDecodeError:
             print(f"Error: The file at '{file_path}' is not a valid JSON file.")
             return []
-        
+
         messages = []
         for msg_data in reversed(data.get("messages", [])):
             timestamp_ms = msg_data.get("timestamp_ms")
@@ -40,11 +42,11 @@ class MessengerParser(BaseParser):
             message_content = ""
             if "content" in msg_data:
                 message_content += _fix_facebook_encoding(msg_data["content"])
-            
+
             if "share" in msg_data and "link" in msg_data["share"]:
                 link = msg_data["share"]["link"]
                 share_text = _fix_facebook_encoding(msg_data["share"].get("share_text", ""))
-                message_content += f' [Shared Link: {link}]'
+                message_content += f" [Shared Link: {link}]"
                 if share_text:
                     message_content += f" Preview: {share_text}"
 
@@ -61,7 +63,7 @@ class MessengerParser(BaseParser):
             elif "videos" in msg_data and msg_data["videos"]:
                 message["type"] = "video"
                 message["attachment_path"] = msg_data["videos"][0].get("uri")
-            
+
             messages.append(message)
 
         return messages

@@ -63,13 +63,11 @@ def test_one_message_has_two_attachments_with_the_same_timestamp(
     built: tuple[Path, sqlite3.Connection],
 ) -> None:
     _, conn = built
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT j.message_id, COUNT(*) AS n, COUNT(DISTINCT a.created_date) AS times
         FROM message_attachment_join j JOIN attachment a ON a.ROWID = j.attachment_id
         GROUP BY j.message_id HAVING n >= 2
-        """
-    ).fetchall()
+        """).fetchall()
     assert any(r["times"] == 1 for r in rows)
 
 

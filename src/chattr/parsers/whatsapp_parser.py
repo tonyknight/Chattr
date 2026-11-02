@@ -1,6 +1,8 @@
 import re
 import datetime
+from typing import Any, Optional
 from chattr.parsers.base_parser import BaseParser
+
 
 class WhatsAppParser(BaseParser):
     """Parses exported WhatsApp chat .txt files."""
@@ -15,10 +17,12 @@ class WhatsAppParser(BaseParser):
         Returns:
             list: A list of standardized message dictionaries.
         """
-        message_start_regex = re.compile(r"^\u200e?\[(\d{4}-\d{2}-\d{2}, \d{2}:\d{2}:\d{2})\] ([^:]+): \u200e?(.*)")
-        
-        messages = []
-        current_message = None
+        message_start_regex = re.compile(
+            r"^\u200e?\[(\d{4}-\d{2}-\d{2}, \d{2}:\d{2}:\d{2})\] ([^:]+): \u200e?(.*)"
+        )
+
+        messages: list[dict[str, Any]] = []
+        current_message: Optional[dict[str, Any]] = None
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -31,9 +35,11 @@ class WhatsAppParser(BaseParser):
                                 messages.append(current_message)
 
                         timestamp_str, author, message_content = match.groups()
-                        
+
                         current_message = {
-                            "timestamp": datetime.datetime.strptime(timestamp_str, "%Y-%m-%d, %H:%M:%S"),
+                            "timestamp": datetime.datetime.strptime(
+                                timestamp_str, "%Y-%m-%d, %H:%M:%S"
+                            ),
                             "author": author.strip(),
                             "message": message_content.strip(),
                             "type": "text",

@@ -25,7 +25,9 @@ def png(width: int = 2, height: int = 2, rgb: tuple[int, int, int] = (200, 120, 
     header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     row = b"\x00" + bytes(rgb) * width
     pixels = zlib.compress(row * height, 9)
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    )
 
 
 def wav(seconds: float = 0.5, rate: int = 8000, hz: float = 440.0) -> bytes:

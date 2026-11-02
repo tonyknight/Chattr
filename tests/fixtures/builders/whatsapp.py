@@ -98,4 +98,8 @@ def _build_us(out: Path) -> Path:
 def build_whatsapp(out_dir: Path) -> dict[str, Path]:
     """Write the three export folders into `out_dir`; return them keyed by variant."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    return {"ios": _build_ios(out_dir), "android": _build_android(out_dir), "us": _build_us(out_dir)}
+    return {
+        "ios": _build_ios(out_dir),
+        "android": _build_android(out_dir),
+        "us": _build_us(out_dir),
+    }

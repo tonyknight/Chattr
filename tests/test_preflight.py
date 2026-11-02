@@ -9,7 +9,13 @@ import pytest
 
 from chattr import preflight
 
-SERVICES = ["iMessage.json", "WhatsApp.json", "Messenger.json", "GoogleVoice.json", "Voicemail.json"]
+SERVICES = [
+    "iMessage.json",
+    "WhatsApp.json",
+    "Messenger.json",
+    "GoogleVoice.json",
+    "Voicemail.json",
+]
 
 
 @pytest.fixture
@@ -27,10 +33,16 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def snapshot(root: Path) -> dict[str, bytes]:
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
 
 
-def test_first_run_with_a_root_creates_everything_without_prompting(home: Path, tmp_path: Path) -> None:
+def test_first_run_with_a_root_creates_everything_without_prompting(
+    home: Path, tmp_path: Path
+) -> None:
     root = tmp_path / "Chattr"
     assert preflight.run_preflight(str(root), interactive=False) == str(root)
     for folder in ("Database", "Output/Chattr", "Output/iMessage", "Services", "temp"):

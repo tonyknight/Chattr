@@ -51,7 +51,13 @@ def test_global_and_service_settings_are_merged(home: Path, tmp_path: Path) -> N
     assert settings.get("global.database.unified_schema.file") == f"{root}/Database/chattr.sqlite"
     assert settings.get("services.imessage.preferences.spam_filtering.mode") == "aggressive"
     assert settings.get("services.whatsapp.state.total_messages_imported") == 0
-    assert set(settings.services()) == {"imessage", "whatsapp", "messenger", "googlevoice", "voicemail"}
+    assert set(settings.services()) == {
+        "imessage",
+        "whatsapp",
+        "messenger",
+        "googlevoice",
+        "voicemail",
+    }
     assert settings.get("services.nope.preferences.x", "fallback") == "fallback"
 
 

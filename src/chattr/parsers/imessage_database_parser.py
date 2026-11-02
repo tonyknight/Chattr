@@ -62,6 +62,7 @@ from tqdm import tqdm
 try:
     import vobject
     import phonenumbers
+
     CONTACTS_AVAILABLE = True
 except ImportError:
     CONTACTS_AVAILABLE = False
@@ -95,11 +96,11 @@ class MessageSpamFilter:
         """
         self.enable_aggressive_filtering = enable_aggressive_filtering
         self.stats = {
-            'rcs_system': 0,
-            'unknown_sender_unread': 0,
-            'unread_imessage_system': 0,
-            'group_system': 0,
-            'total_suppressed': 0
+            "rcs_system": 0,
+            "unknown_sender_unread": 0,
+            "unread_imessage_system": 0,
+            "group_system": 0,
+            "total_suppressed": 0,
         }
 
     def should_suppress_message(self, message_data: Dict[str, Any]) -> Tuple[bool, str]:
@@ -122,14 +123,14 @@ class MessageSpamFilter:
         Returns:
             Tuple of (should_suppress: bool, reason: str)
         """
-        service = message_data.get('service')
-        sender = message_data.get('sender', 'Unknown')
-        text = message_data.get('text')
-        is_read = message_data.get('is_read', True)
-        is_from_me = message_data.get('is_from_me', False)
-        chat = message_data.get('chat', '')
-        attachments_count = message_data.get('attachments_count', 0)
-        tapbacks_count = message_data.get('tapbacks_count', 0)
+        service = message_data.get("service")
+        sender = message_data.get("sender", "Unknown")
+        text = message_data.get("text")
+        is_read = message_data.get("is_read", True)
+        is_from_me = message_data.get("is_from_me", False)
+        chat = message_data.get("chat", "")
+        attachments_count = message_data.get("attachments_count", 0)
+        tapbacks_count = message_data.get("tapbacks_count", 0)
 
         # Only filter messages with null text and no attachments/tapbacks
         # This ensures we never filter legitimate content
@@ -139,47 +140,46 @@ class MessageSpamFilter:
         # Rule 1: RCS System Messages (always enabled - conservative)
         # These are protocol-level messages like delivery receipts, connection status
         # Analysis: 38 messages (0.03% of total) - safe to remove
-        if (service == 'RCS' and
-            not is_read and
-            attachments_count == 0):
-            self.stats['rcs_system'] += 1
-            self.stats['total_suppressed'] += 1
+        if service == "RCS" and not is_read and attachments_count == 0:
+            self.stats["rcs_system"] += 1
+            self.stats["total_suppressed"] += 1
             return True, "RCS System Message"
 
         # Rule 2: Unknown Sender Unread (always enabled - conservative)
         # These are typically spam messages from unidentified senders
         # Analysis: 127 messages (0.12% of total) - safe to remove
-        if (sender == 'Unknown' and
-            not is_read and
-            attachments_count == 0 and
-            tapbacks_count == 0):
-            self.stats['unknown_sender_unread'] += 1
-            self.stats['total_suppressed'] += 1
+        if sender == "Unknown" and not is_read and attachments_count == 0 and tapbacks_count == 0:
+            self.stats["unknown_sender_unread"] += 1
+            self.stats["total_suppressed"] += 1
             return True, "Unknown Sender Unread"
 
         # Rule 3: Unread iMessage System (aggressive filtering only)
         # These are system notifications that users typically don't read
         # Analysis: 347 messages (0.31% of total) - more aggressive removal
-        if (self.enable_aggressive_filtering and
-            service == 'iMessage' and
-            not is_read and
-            not is_from_me and
-            attachments_count == 0 and
-            tapbacks_count == 0):
-            self.stats['unread_imessage_system'] += 1
-            self.stats['total_suppressed'] += 1
+        if (
+            self.enable_aggressive_filtering
+            and service == "iMessage"
+            and not is_read
+            and not is_from_me
+            and attachments_count == 0
+            and tapbacks_count == 0
+        ):
+            self.stats["unread_imessage_system"] += 1
+            self.stats["total_suppressed"] += 1
             return True, "Unread iMessage System"
 
         # Rule 4: Group System Messages (aggressive filtering only)
         # These are participant changes, group updates, etc.
         # Analysis: Minimal impact but improves data cleanliness
-        if (self.enable_aggressive_filtering and
-            ',' in chat and  # Multiple participants = group
-            not is_read and
-            attachments_count == 0 and
-            tapbacks_count == 0):
-            self.stats['group_system'] += 1
-            self.stats['total_suppressed'] += 1
+        if (
+            self.enable_aggressive_filtering
+            and "," in chat  # Multiple participants = group
+            and not is_read
+            and attachments_count == 0
+            and tapbacks_count == 0
+        ):
+            self.stats["group_system"] += 1
+            self.stats["total_suppressed"] += 1
             return True, "Group System Message"
 
         return False, ""
@@ -197,6 +197,7 @@ class MessageSpamFilter:
 @dataclass
 class Message:
     """Represents a single iMessage"""
+
     rowid: int
     guid: str
     text: Optional[str]
@@ -218,13 +219,14 @@ class Message:
     sender: str
     chat_name: str
     # Optional fields for enriched data
-    attachments: Optional[List['Attachment']] = field(default=None)
-    tapbacks: Optional[List['Tapback']] = field(default=None)
+    attachments: Optional[List["Attachment"]] = field(default=None)
+    tapbacks: Optional[List["Tapback"]] = field(default=None)
 
 
 @dataclass
 class Attachment:
     """Represents a file attachment"""
+
     rowid: int
     filename: Optional[str]
     mime_type: Optional[str]
@@ -237,6 +239,7 @@ class Attachment:
 @dataclass
 class Chat:
     """Represents a conversation/chat"""
+
     rowid: int
     chat_identifier: str
     service_name: Optional[str]
@@ -250,6 +253,7 @@ class Chat:
 @dataclass
 class Handle:
     """Represents a contact handle (phone/email)"""
+
     rowid: int
     id: str
     person_centric_id: Optional[str]
@@ -258,6 +262,7 @@ class Handle:
 @dataclass
 class Tapback:
     """Represents a reaction/tapback to a message"""
+
     type: str
     sender: str
     action: str  # "Added" or "Removed"
@@ -270,17 +275,33 @@ class iMessageDatabaseParser:
 
     # Tapback type mappings
     TAPBACK_TYPES = {
-        2000: "Loved",      3000: "Removed Love",
-        2001: "Liked",      3001: "Removed Like",
-        2002: "Disliked",   3002: "Removed Dislike",
-        2003: "Laughed",    3003: "Removed Laugh",
-        2004: "Emphasized", 3004: "Removed Emphasis",
-        2005: "Questioned", 3005: "Removed Question",
-        2006: "Custom Emoji", 3006: "Removed Custom Emoji",
-        2007: "Sticker",    3007: "Removed Sticker"
+        2000: "Loved",
+        3000: "Removed Love",
+        2001: "Liked",
+        3001: "Removed Like",
+        2002: "Disliked",
+        3002: "Removed Dislike",
+        2003: "Laughed",
+        3003: "Removed Laugh",
+        2004: "Emphasized",
+        3004: "Removed Emphasis",
+        2005: "Questioned",
+        3005: "Removed Question",
+        2006: "Custom Emoji",
+        3006: "Removed Custom Emoji",
+        2007: "Sticker",
+        3007: "Removed Sticker",
     }
 
-    def __init__(self, db_path: Optional[str] = None, vcf_path: Optional[str] = None, region: str = 'US', attachment_root: Optional[str] = None, enable_spam_filtering: bool = True, aggressive_spam_filtering: bool = True):
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        vcf_path: Optional[str] = None,
+        region: str = "US",
+        attachment_root: Optional[str] = None,
+        enable_spam_filtering: bool = True,
+        aggressive_spam_filtering: bool = True,
+    ):
         """
         Initialize database connection and optionally load contacts from VCF
 
@@ -329,8 +350,11 @@ class iMessageDatabaseParser:
         # Performance impact: <0.1s for 110K messages (negligible)
         # Quality improvement: 99.424% → 99.887% text extraction rate
         self.enable_spam_filtering = enable_spam_filtering
+        self.spam_filter: Optional[MessageSpamFilter]
         if enable_spam_filtering:
-            self.spam_filter = MessageSpamFilter(enable_aggressive_filtering=aggressive_spam_filtering)
+            self.spam_filter = MessageSpamFilter(
+                enable_aggressive_filtering=aggressive_spam_filtering
+            )
         else:
             self.spam_filter = None
 
@@ -343,7 +367,9 @@ class iMessageDatabaseParser:
         group_chats = sum(1 for chat in self.enhanced_chats.values() if chat.is_group_chat)
         individual_chats = len(self.enhanced_chats) - group_chats
 
-        print(f"Loaded {len(self.handles)} handles and {len(self.enhanced_chats)} chats ({group_chats} group, {individual_chats} individual)")
+        print(
+            f"Loaded {len(self.handles)} handles and {len(self.enhanced_chats)} chats ({group_chats} group, {individual_chats} individual)"
+        )
 
         # Store attachment root for path resolution
         self.attachment_root = attachment_root
@@ -359,7 +385,7 @@ class iMessageDatabaseParser:
 
         print(f"Connected to database: {db_path}")
         print(f"Loaded {len(self.handles)} handles and {len(self.chats)} chats")
-    
+
     @staticmethod
     def get_default_db_path() -> str:
         """Get default macOS iMessage database path"""
@@ -380,14 +406,14 @@ class iMessageDatabaseParser:
 
     def _load_contacts_from_vcf(self, vcf_file_path: str, region: str) -> Dict[str, str]:
         """Load contacts from a VCF file and normalize phone numbers and emails"""
-        contacts = {}
+        contacts: Dict[str, str] = {}
 
         if not os.path.exists(vcf_file_path):
             print(f"Warning: VCF file not found at {vcf_file_path}")
             return contacts
 
         try:
-            with open(vcf_file_path, 'r', encoding='utf-8') as vcf_file:
+            with open(vcf_file_path, "r", encoding="utf-8") as vcf_file:
                 vcf_reader = vobject.readComponents(vcf_file.read())
 
                 for vcard in vcf_reader:
@@ -395,15 +421,15 @@ class iMessageDatabaseParser:
                     first_name = ""
                     last_name = ""
 
-                    if 'n' in vcard.contents:
-                        name_obj = vcard.contents['n'][0].value
-                        first_name = name_obj.given if hasattr(name_obj, 'given') else ""
-                        last_name = name_obj.family if hasattr(name_obj, 'family') else ""
+                    if "n" in vcard.contents:
+                        name_obj = vcard.contents["n"][0].value
+                        first_name = name_obj.given if hasattr(name_obj, "given") else ""
+                        last_name = name_obj.family if hasattr(name_obj, "family") else ""
 
                     # Fallback to formatted name if structured name not available
-                    if not first_name and not last_name and 'fn' in vcard.contents:
-                        full_name = vcard.contents['fn'][0].value
-                        name_parts = full_name.split(' ', 1)
+                    if not first_name and not last_name and "fn" in vcard.contents:
+                        full_name = vcard.contents["fn"][0].value
+                        name_parts = full_name.split(" ", 1)
                         first_name = name_parts[0] if len(name_parts) > 0 else ""
                         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
@@ -412,16 +438,16 @@ class iMessageDatabaseParser:
                         continue
 
                     # Process phone numbers
-                    if 'tel' in vcard.contents:
-                        for tel in vcard.contents['tel']:
+                    if "tel" in vcard.contents:
+                        for tel in vcard.contents["tel"]:
                             raw_phone = tel.value
                             normalized_phone = self._normalize_phone_number(raw_phone, region)
                             if normalized_phone:
                                 contacts[normalized_phone] = full_name
 
                     # Process email addresses
-                    if 'email' in vcard.contents:
-                        for email in vcard.contents['email']:
+                    if "email" in vcard.contents:
+                        for email in vcard.contents["email"]:
                             email_addr = email.value.lower().strip()
                             if email_addr:
                                 contacts[email_addr] = full_name
@@ -430,29 +456,29 @@ class iMessageDatabaseParser:
             print(f"Error reading VCF file: {e}")
 
         return contacts
-    
+
     def _load_handles(self) -> Dict[int, str]:
         """Load contact handles for ID lookup"""
         handles = {}
         cursor = self.conn.execute("SELECT rowid, id FROM handle")
         for row in cursor:
-            handles[row['rowid']] = row['id']
+            handles[row["rowid"]] = row["id"]
         # Handle ID 0 is self in group chats
         handles[0] = "Me"
         return handles
-    
+
     def _load_chats(self) -> Dict[int, str]:
         """Load chat identifiers for lookup"""
         chats = {}
         cursor = self.conn.execute("SELECT rowid, chat_identifier, display_name FROM chat")
         for row in cursor:
-            name = row['display_name'] or row['chat_identifier']
-            chats[row['rowid']] = name
+            name = row["display_name"] or row["chat_identifier"]
+            chats[row["rowid"]] = name
         return chats
 
     def _load_chat_participants(self) -> Dict[int, List[str]]:
         """Load chat participants from chat_handle_join table"""
-        participants = {}
+        participants: Dict[int, List[str]] = {}
         query = """
         SELECT c.chat_id, h.id as handle_name
         FROM chat_handle_join c
@@ -462,8 +488,8 @@ class iMessageDatabaseParser:
 
         cursor = self.conn.execute(query)
         for row in cursor:
-            chat_id = row['chat_id']
-            handle_name = row['handle_name']
+            chat_id = row["chat_id"]
+            handle_name = row["handle_name"]
 
             if chat_id not in participants:
                 participants[chat_id] = []
@@ -483,22 +509,22 @@ class iMessageDatabaseParser:
 
         cursor = self.conn.execute(query)
         for row in cursor:
-            chat_id = row['rowid']
+            chat_id = row["rowid"]
             participants = participants_map.get(chat_id, [])
 
             # Determine if this is a group chat
             # Style 43 = group chat, Style 45 = individual chat
-            is_group = row['style'] == 43 or len(participants) > 2
+            is_group = row["style"] == 43 or len(participants) > 2
 
             chat = Chat(
                 rowid=chat_id,
-                chat_identifier=row['chat_identifier'],
-                service_name=row['service_name'],
-                display_name=row['display_name'],
-                style=row['style'],
+                chat_identifier=row["chat_identifier"],
+                service_name=row["service_name"],
+                display_name=row["display_name"],
+                style=row["style"],
                 participants=participants,
                 participant_count=len(participants),
-                is_group_chat=is_group
+                is_group_chat=is_group,
             )
 
             chats[chat_id] = chat
@@ -593,7 +619,7 @@ class iMessageDatabaseParser:
         try:
             # Method 1: Direct byte-level extraction (most reliable)
             # Look for the + character followed by length bytes, then text
-            plus_idx = attributed_body.find(b'+')
+            plus_idx = attributed_body.find(b"+")
             if plus_idx >= 0 and plus_idx + 2 < len(attributed_body):
                 # Try different offsets after + to handle various patterns
                 for offset in [2, 4]:  # Common patterns: +. and +\x81\xd5\x00
@@ -611,25 +637,29 @@ class iMessageDatabaseParser:
 
                         if end_idx > start_idx:
                             try:
-                                extracted_text = attributed_body[start_idx:end_idx].decode('utf-8', errors='ignore').strip()
+                                extracted_text = (
+                                    attributed_body[start_idx:end_idx]
+                                    .decode("utf-8", errors="ignore")
+                                    .strip()
+                                )
                                 if len(extracted_text) >= 1:
                                     return extracted_text
                             except:
                                 pass
 
             # Method 2: Fallback to regex patterns on decoded string
-            text_data = attributed_body.decode('utf-8', errors='ignore')
+            text_data = attributed_body.decode("utf-8", errors="ignore")
 
             # Look for text patterns in the typedstream data
             patterns = [
                 # Pattern 1: Text after + marker, skipping length prefix character
-                r'[\x01-\x04][+].([^\x00-\x08\x0e-\x1f]+)',
+                r"[\x01-\x04][+].([^\x00-\x08\x0e-\x1f]+)",
                 # Pattern 2: Text after + marker with optional length prefix
-                r'[\x01-\x04][+][\x1c-\x1f]?\s*([^\x00-\x08\x0e-\x1f]+)',
+                r"[\x01-\x04][+][\x1c-\x1f]?\s*([^\x00-\x08\x0e-\x1f]+)",
                 # Pattern 3: Text after NSString marker
-                r'NSString[^\x00-\x1f]*[\x00-\x1f]+([^\x00-\x08\x0e-\x1f]{3,})',
+                r"NSString[^\x00-\x1f]*[\x00-\x1f]+([^\x00-\x08\x0e-\x1f]{3,})",
                 # Pattern 4: Look for readable text sequences (fallback)
-                r'([a-zA-Z][a-zA-Z0-9\s\.,!?\'""%$#@&*()_+=\-\[\]{}|\\:;<>/~`]{4,})'
+                r'([a-zA-Z][a-zA-Z0-9\s\.,!?\'""%$#@&*()_+=\-\[\]{}|\\:;<>/~`]{4,})',
             ]
 
             for pattern in patterns:
@@ -640,23 +670,27 @@ class iMessageDatabaseParser:
                     for m in matches:
                         text = m.strip()
                         # Skip technical strings
-                        if (len(text) > 2 and
-                            not text.startswith('kIM') and
-                            not text.startswith('__k') and
-                            not text.startswith('NS') and
-                            not text.startswith('Z$') and  # NSKeyedArchiver artifacts
-                            not text.startswith('X$') and  # NSKeyedArchiver artifacts
-                            not text.startswith('R(') and  # Technical patterns
-                            not text.startswith('RMSV') and  # Technical patterns
-                            'AttributeName' not in text and
-                            'NSDictionary' not in text and
-                            'PhoneNumber' not in text and
-                            'EmailAddress' not in text and
-                            'streamtyped' not in text and
-                            '$class' not in text and  # NSKeyedArchiver class references
-                            not text.count('$') > 2 and  # Likely technical if many $ symbols
-                            not (len(text) < 50 and text.count('$') > 0) and  # Short strings with $ are likely technical
-                            not all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ$()+-*' for c in text[:20])):  # All caps + symbols = technical
+                        if (
+                            len(text) > 2
+                            and not text.startswith("kIM")
+                            and not text.startswith("__k")
+                            and not text.startswith("NS")
+                            and not text.startswith("Z$")  # NSKeyedArchiver artifacts
+                            and not text.startswith("X$")  # NSKeyedArchiver artifacts
+                            and not text.startswith("R(")  # Technical patterns
+                            and not text.startswith("RMSV")  # Technical patterns
+                            and "AttributeName" not in text
+                            and "NSDictionary" not in text
+                            and "PhoneNumber" not in text
+                            and "EmailAddress" not in text
+                            and "streamtyped" not in text
+                            and "$class" not in text  # NSKeyedArchiver class references
+                            and not text.count("$") > 2  # Likely technical if many $ symbols
+                            and not (
+                                len(text) < 50 and text.count("$") > 0
+                            )  # Short strings with $ are likely technical
+                            and not all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ$()+-*" for c in text[:20])
+                        ):  # All caps + symbols = technical
                             candidates.append(text)
 
                     if candidates:
@@ -669,7 +703,8 @@ class iMessageDatabaseParser:
             # If anything goes wrong, return None
             return None
 
-    def _apple_timestamp_to_datetime(self, timestamp: int) -> datetime:
+    @staticmethod
+    def _apple_timestamp_to_datetime(timestamp: int) -> datetime:
         """Convert Apple timestamp to Python datetime"""
         if timestamp == 0:
             return datetime.fromtimestamp(0)
@@ -677,7 +712,7 @@ class iMessageDatabaseParser:
         # Apple timestamps are nanoseconds since 2001-01-01
         apple_epoch = datetime(2001, 1, 1)
         return apple_epoch + timedelta(seconds=timestamp / 1_000_000_000)
-    
+
     def _get_sender_name(self, handle_id: Optional[int], is_from_me: bool) -> str:
         """Get sender name from handle ID with contact enhancement"""
         if is_from_me:
@@ -697,15 +732,15 @@ class iMessageDatabaseParser:
             return None
 
         # Direct lookup for emails
-        if '@' in raw_handle:
+        if "@" in raw_handle:
             return self.contacts.get(raw_handle.lower())
 
         # For phone numbers, try to normalize and lookup
         if CONTACTS_AVAILABLE:
             # Try different regions for normalization
-            for region in ['US', 'CA', 'GB', None]:
+            for region in ["US", "CA", "GB", None]:
                 try:
-                    normalized = self._normalize_phone_number(raw_handle, region or 'US')
+                    normalized = self._normalize_phone_number(raw_handle, region or "US")
                     if normalized and normalized in self.contacts:
                         return self.contacts[normalized]
                 except:
@@ -713,7 +748,7 @@ class iMessageDatabaseParser:
 
         # Fallback: direct string lookup
         return self.contacts.get(raw_handle)
-    
+
     def _get_chat_name(self, chat_id: Optional[int]) -> str:
         """Get enhanced chat name from chat ID"""
         if chat_id and chat_id in self.enhanced_chats:
@@ -723,11 +758,12 @@ class iMessageDatabaseParser:
             return self.chats[chat_id]
         else:
             return "Unknown"
-    
-    def get_messages_with_fallback(self, limit: Optional[int] = None, 
-                                 chat_filter: Optional[str] = None) -> List[Message]:
+
+    def get_messages_with_fallback(
+        self, limit: Optional[int] = None, chat_filter: Optional[int] = None
+    ) -> List[Message]:
         """Get messages with schema version fallback"""
-        
+
         # Try newest schema first (macOS Ventura+)
         try:
             query_new = """
@@ -742,23 +778,23 @@ class iMessageDatabaseParser:
             LEFT JOIN chat_message_join as c ON m.ROWID = c.message_id
             WHERE 1=1
             """
-            
-            params = []
+
+            params: List[Any] = []
             if chat_filter:
                 query_new += " AND c.chat_id = ?"
                 params.append(chat_filter)
-            
+
             query_new += " ORDER BY m.date DESC"
-            
+
             if limit:
                 query_new += " LIMIT ?"
                 params.append(limit)
-            
+
             return self._execute_message_query(query_new, params)
-            
+
         except sqlite3.OperationalError as e:
             print(f"New schema failed: {e}")
-            
+
         # Fallback to older schema
         try:
             query_old = """
@@ -769,40 +805,40 @@ class iMessageDatabaseParser:
             LEFT JOIN chat_message_join as c ON m.ROWID = c.message_id
             WHERE 1=1
             """
-            
+
             params = []
             if chat_filter:
                 query_old += " AND c.chat_id = ?"
                 params.append(chat_filter)
-            
+
             query_old += " ORDER BY m.date DESC"
-            
+
             if limit:
                 query_old += " LIMIT ?"
                 params.append(limit)
-            
+
             return self._execute_message_query(query_old, params)
-            
+
         except sqlite3.OperationalError as e:
             raise Exception(f"Unsupported database schema: {e}")
-    
+
     def _execute_message_query(self, query: str, params: List) -> List[Message]:
         """Execute message query and return Message objects"""
         cursor = self.conn.execute(query, params)
         messages = []
-        
+
         for row in cursor:
             # Convert timestamp
-            timestamp = self._apple_timestamp_to_datetime(row['date'])
-            
+            timestamp = self._apple_timestamp_to_datetime(row["date"])
+
             # Get sender and chat names
-            sender = self._get_sender_name(self._row_get(row, 'handle_id'), bool(row['is_from_me']))
-            chat_name = self._get_chat_name(self._row_get(row, 'chat_id'))
+            sender = self._get_sender_name(self._row_get(row, "handle_id"), bool(row["is_from_me"]))
+            chat_name = self._get_chat_name(self._row_get(row, "chat_id"))
 
             # Extract text with fallback to attributedBody
-            text = self._row_get(row, 'text')
+            text = self._row_get(row, "text")
             if text is None:
-                attributed_body = self._row_get(row, 'attributedBody')
+                attributed_body = self._row_get(row, "attributedBody")
                 if attributed_body:
                     text = self._extract_text_from_attributed_body(attributed_body)
 
@@ -812,14 +848,14 @@ class iMessageDatabaseParser:
             if self.enable_spam_filtering and self.spam_filter:
                 # Prepare message data for spam filtering analysis
                 message_data = {
-                    'service': self._row_get(row, 'service'),
-                    'sender': sender,
-                    'text': text,
-                    'is_read': bool(self._row_get(row, 'is_read', False)),
-                    'is_from_me': bool(row['is_from_me']),
-                    'chat': chat_name,
-                    'attachments_count': self._row_get(row, 'num_attachments', 0),
-                    'tapbacks_count': 0  # Tapbacks processed later, safe to assume 0 here
+                    "service": self._row_get(row, "service"),
+                    "sender": sender,
+                    "text": text,
+                    "is_read": bool(self._row_get(row, "is_read", False)),
+                    "is_from_me": bool(row["is_from_me"]),
+                    "chat": chat_name,
+                    "attachments_count": self._row_get(row, "num_attachments", 0),
+                    "tapbacks_count": 0,  # Tapbacks processed later, safe to assume 0 here
                 }
 
                 should_suppress, reason = self.spam_filter.should_suppress_message(message_data)
@@ -829,33 +865,34 @@ class iMessageDatabaseParser:
                     continue
 
             message = Message(
-                rowid=row['rowid'],
-                guid=row['guid'],
+                rowid=row["rowid"],
+                guid=row["guid"],
                 text=text,
-                service=self._row_get(row, 'service'),
-                handle_id=self._row_get(row, 'handle_id'),
-                date=row['date'],
-                date_read=self._row_get(row, 'date_read'),
-                date_delivered=self._row_get(row, 'date_delivered'),
-                is_from_me=bool(row['is_from_me']),
-                is_read=bool(self._row_get(row, 'is_read', False)),
-                item_type=self._row_get(row, 'item_type', 0),
-                associated_message_guid=self._row_get(row, 'associated_message_guid'),
-                associated_message_type=self._row_get(row, 'associated_message_type'),
-                balloon_bundle_id=self._row_get(row, 'balloon_bundle_id'),
-                associated_message_emoji=self._row_get(row, 'associated_message_emoji'),
-                chat_id=self._row_get(row, 'chat_id'),
-                num_attachments=self._row_get(row, 'num_attachments', 0),
+                service=self._row_get(row, "service"),
+                handle_id=self._row_get(row, "handle_id"),
+                date=row["date"],
+                date_read=self._row_get(row, "date_read"),
+                date_delivered=self._row_get(row, "date_delivered"),
+                is_from_me=bool(row["is_from_me"]),
+                is_read=bool(self._row_get(row, "is_read", False)),
+                item_type=self._row_get(row, "item_type", 0),
+                associated_message_guid=self._row_get(row, "associated_message_guid"),
+                associated_message_type=self._row_get(row, "associated_message_type"),
+                balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
+                associated_message_emoji=self._row_get(row, "associated_message_emoji"),
+                chat_id=self._row_get(row, "chat_id"),
+                num_attachments=self._row_get(row, "num_attachments", 0),
                 timestamp=timestamp,
                 sender=sender,
-                chat_name=chat_name
+                chat_name=chat_name,
             )
             messages.append(message)
-        
+
         return messages
 
-    def get_all_messages_parallel(self, chat_filter: Optional[str] = None,
-                                max_workers: int = 4, batch_size: int = 1000) -> List[Message]:
+    def get_all_messages_parallel(
+        self, chat_filter: Optional[int] = None, max_workers: int = 4, batch_size: int = 1000
+    ) -> List[Message]:
         """
         Get all messages using parallel processing with progress indicator
 
@@ -917,7 +954,7 @@ class iMessageDatabaseParser:
         message_ids = [row[0] for row in cursor]
 
         # Split into batches
-        batches = [message_ids[i:i + batch_size] for i in range(0, len(message_ids), batch_size)]
+        batches = [message_ids[i : i + batch_size] for i in range(0, len(message_ids), batch_size)]
 
         # Process batches in parallel with progress bar
         all_messages = []
@@ -941,7 +978,9 @@ class iMessageDatabaseParser:
         print(f"Successfully processed {len(all_messages):,} messages")
         return all_messages
 
-    def _process_message_batch(self, message_ids: List[int], chat_filter: Optional[str] = None) -> List[Message]:
+    def _process_message_batch(
+        self, message_ids: List[int], chat_filter: Optional[int] = None
+    ) -> List[Message]:
         """Process a batch of messages (used by parallel processing)"""
         if not message_ids:
             return []
@@ -952,7 +991,7 @@ class iMessageDatabaseParser:
 
         try:
             # Build query for this batch
-            placeholders = ','.join(['?'] * len(message_ids))
+            placeholders = ",".join(["?"] * len(message_ids))
             query = f"""
             SELECT
                 m.rowid, m.guid, m.text, m.attributedBody, m.service, m.handle_id, m.date,
@@ -966,7 +1005,7 @@ class iMessageDatabaseParser:
             WHERE m.rowid IN ({placeholders})
             """
 
-            params = message_ids
+            params: List[Any] = list(message_ids)
             if chat_filter:
                 query += " AND c.chat_id = ?"
                 params.append(chat_filter)
@@ -976,40 +1015,42 @@ class iMessageDatabaseParser:
 
             for row in cursor:
                 # Convert timestamp
-                timestamp = self._apple_timestamp_to_datetime(row['date'])
+                timestamp = self._apple_timestamp_to_datetime(row["date"])
 
                 # Get sender and chat names
-                sender = self._get_sender_name(self._row_get(row, 'handle_id'), bool(row['is_from_me']))
-                chat_name = self._get_chat_name(self._row_get(row, 'chat_id'))
+                sender = self._get_sender_name(
+                    self._row_get(row, "handle_id"), bool(row["is_from_me"])
+                )
+                chat_name = self._get_chat_name(self._row_get(row, "chat_id"))
 
                 # Extract text with fallback to attributedBody
-                text = self._row_get(row, 'text')
+                text = self._row_get(row, "text")
                 if text is None:
-                    attributed_body = self._row_get(row, 'attributedBody')
+                    attributed_body = self._row_get(row, "attributedBody")
                     if attributed_body:
                         text = self._extract_text_from_attributed_body(attributed_body)
 
                 message = Message(
-                    rowid=row['rowid'],
-                    guid=row['guid'],
+                    rowid=row["rowid"],
+                    guid=row["guid"],
                     text=text,
-                    service=self._row_get(row, 'service'),
-                    handle_id=self._row_get(row, 'handle_id'),
-                    date=row['date'],
-                    date_read=self._row_get(row, 'date_read'),
-                    date_delivered=self._row_get(row, 'date_delivered'),
-                    is_from_me=bool(row['is_from_me']),
-                    is_read=bool(self._row_get(row, 'is_read', False)),
-                    item_type=self._row_get(row, 'item_type', 0),
-                    associated_message_guid=self._row_get(row, 'associated_message_guid'),
-                    associated_message_type=self._row_get(row, 'associated_message_type'),
-                    balloon_bundle_id=self._row_get(row, 'balloon_bundle_id'),
-                    associated_message_emoji=self._row_get(row, 'associated_message_emoji'),
-                    chat_id=self._row_get(row, 'chat_id'),
-                    num_attachments=self._row_get(row, 'num_attachments', 0),
+                    service=self._row_get(row, "service"),
+                    handle_id=self._row_get(row, "handle_id"),
+                    date=row["date"],
+                    date_read=self._row_get(row, "date_read"),
+                    date_delivered=self._row_get(row, "date_delivered"),
+                    is_from_me=bool(row["is_from_me"]),
+                    is_read=bool(self._row_get(row, "is_read", False)),
+                    item_type=self._row_get(row, "item_type", 0),
+                    associated_message_guid=self._row_get(row, "associated_message_guid"),
+                    associated_message_type=self._row_get(row, "associated_message_type"),
+                    balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
+                    associated_message_emoji=self._row_get(row, "associated_message_emoji"),
+                    chat_id=self._row_get(row, "chat_id"),
+                    num_attachments=self._row_get(row, "num_attachments", 0),
                     timestamp=timestamp,
                     sender=sender,
-                    chat_name=chat_name
+                    chat_name=chat_name,
                 )
                 messages.append(message)
 
@@ -1028,24 +1069,24 @@ class iMessageDatabaseParser:
         WHERE maj.message_id = ?
         ORDER BY maj.rowid
         """
-        
+
         cursor = self.conn.execute(query, (message_id,))
         attachments = []
-        
+
         for row in cursor:
             attachment = Attachment(
-                rowid=row['rowid'],
-                filename=self._row_get(row, 'filename'),
-                mime_type=self._row_get(row, 'mime_type'),
-                transfer_name=self._row_get(row, 'transfer_name'),
-                total_bytes=self._row_get(row, 'total_bytes', 0),
-                is_sticker=bool(self._row_get(row, 'is_sticker', False)),
-                guid=self._row_get(row, 'guid')
+                rowid=row["rowid"],
+                filename=self._row_get(row, "filename"),
+                mime_type=self._row_get(row, "mime_type"),
+                transfer_name=self._row_get(row, "transfer_name"),
+                total_bytes=self._row_get(row, "total_bytes", 0),
+                is_sticker=bool(self._row_get(row, "is_sticker", False)),
+                guid=self._row_get(row, "guid"),
             )
             attachments.append(attachment)
-        
+
         return attachments
-    
+
     def get_tapbacks_for_message(self, message_guid: str) -> List[Tapback]:
         """Get all tapbacks for a specific message"""
         query = """
@@ -1056,50 +1097,51 @@ class iMessageDatabaseParser:
         AND m.associated_message_type BETWEEN 2000 AND 3007
         ORDER BY m.date
         """
-        
-        cursor = self.conn.execute(query, (message_guid, f'p:0/{message_guid}'))
+
+        cursor = self.conn.execute(query, (message_guid, f"p:0/{message_guid}"))
         tapbacks = []
-        
+
         for row in cursor:
-            tapback_type = self.TAPBACK_TYPES.get(row['associated_message_type'], "Unknown")
-            sender = self._get_sender_name(self._row_get(row, 'handle_id'), bool(row['is_from_me']))
+            tapback_type = self.TAPBACK_TYPES.get(row["associated_message_type"], "Unknown")
+            sender = self._get_sender_name(self._row_get(row, "handle_id"), bool(row["is_from_me"]))
 
             # Parse component index from associated_message_guid
             component_index = 0
-            if self._row_get(row, 'associated_message_guid'):
-                guid = row['associated_message_guid']
-                if guid.startswith('p:'):
+            if self._row_get(row, "associated_message_guid"):
+                guid = row["associated_message_guid"]
+                if guid.startswith("p:"):
                     try:
-                        parts = guid.split('/')
+                        parts = guid.split("/")
                         if len(parts) > 0:
-                            index_part = parts[0].replace('p:', '')
+                            index_part = parts[0].replace("p:", "")
                             component_index = int(index_part)
                     except (ValueError, IndexError):
                         component_index = 0
-            
-            action = "Removed" if row['item_type'] >= 3000 else "Added"
-            
+
+            action = "Removed" if row["item_type"] >= 3000 else "Added"
+
             tapback = Tapback(
                 type=tapback_type,
                 sender=sender,
                 action=action,
                 target_message_guid=message_guid,
-                component_index=component_index
+                component_index=component_index,
             )
             tapbacks.append(tapback)
-        
+
         return tapbacks
-    
+
     def is_tapback_message(self, message: Message) -> bool:
         """Check if a message is a tapback"""
         return 2000 <= message.item_type <= 3007
-    
+
     def is_url_message(self, message: Message) -> bool:
         """Check if a message contains a URL preview"""
         return message.balloon_bundle_id == "com.apple.messages.URLBalloonProvider"
 
-    def enrich_messages_with_attachments_parallel(self, messages: List[Message],
-                                                max_workers: int = 4) -> List[Message]:
+    def enrich_messages_with_attachments_parallel(
+        self, messages: List[Message], max_workers: int = 4
+    ) -> List[Message]:
         """
         Enrich messages with attachments using parallel processing
 
@@ -1126,7 +1168,9 @@ class iMessageDatabaseParser:
         print(f"Loading attachments for {len(messages_with_attachments):,} messages...")
 
         # Process attachments in parallel
-        with tqdm(total=len(messages_with_attachments), desc="Loading attachments", unit="msg") as pbar:
+        with tqdm(
+            total=len(messages_with_attachments), desc="Loading attachments", unit="msg"
+        ) as pbar:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all attachment loading jobs
                 future_to_message = {
@@ -1164,13 +1208,13 @@ class iMessageDatabaseParser:
 
             for row in cursor:
                 attachment = Attachment(
-                    rowid=row['rowid'],
-                    filename=self._row_get(row, 'filename'),
-                    mime_type=self._row_get(row, 'mime_type'),
-                    transfer_name=self._row_get(row, 'transfer_name'),
-                    total_bytes=self._row_get(row, 'total_bytes', 0),
-                    is_sticker=bool(self._row_get(row, 'is_sticker', False)),
-                    guid=self._row_get(row, 'guid')
+                    rowid=row["rowid"],
+                    filename=self._row_get(row, "filename"),
+                    mime_type=self._row_get(row, "mime_type"),
+                    transfer_name=self._row_get(row, "transfer_name"),
+                    total_bytes=self._row_get(row, "total_bytes", 0),
+                    is_sticker=bool(self._row_get(row, "is_sticker", False)),
+                    guid=self._row_get(row, "guid"),
                 )
                 attachments.append(attachment)
 
@@ -1179,8 +1223,9 @@ class iMessageDatabaseParser:
         finally:
             thread_conn.close()
 
-    def enrich_messages_with_tapbacks_parallel(self, messages: List[Message],
-                                             max_workers: int = 4) -> List[Message]:
+    def enrich_messages_with_tapbacks_parallel(
+        self, messages: List[Message], max_workers: int = 4
+    ) -> List[Message]:
         """
         Enrich messages with tapbacks using efficient batch loading
 
@@ -1218,11 +1263,11 @@ class iMessageDatabaseParser:
         with tqdm(total=1, desc="Loading tapbacks", unit="batch") as pbar:
             try:
                 # Create placeholders for the IN clause
-                placeholders = ','.join(['?'] * len(message_guids))
+                placeholders = ",".join(["?"] * len(message_guids))
 
                 # Also create placeholders for the LIKE patterns (p:0/GUID format)
-                like_patterns = [f'p:0/{guid}' for guid in message_guids]
-                like_placeholders = ','.join(['?'] * len(like_patterns))
+                like_patterns = [f"p:0/{guid}" for guid in message_guids]
+                like_placeholders = ",".join(["?"] * len(like_patterns))
 
                 query = f"""
                 SELECT m.*, h.id as handle_name
@@ -1242,49 +1287,55 @@ class iMessageDatabaseParser:
                 # Process all tapback results
                 for row in cursor:
                     # Find the target message GUID
-                    associated_guid = self._row_get(row, 'associated_message_guid')
+                    associated_guid = self._row_get(row, "associated_message_guid")
                     target_guid = None
 
                     if associated_guid:
                         if associated_guid in message_map:
                             target_guid = associated_guid
-                        elif associated_guid.startswith('p:0/'):
+                        elif associated_guid.startswith("p:0/"):
                             # Extract GUID from p:0/GUID format
-                            potential_guid = associated_guid[4:40]  # p:0/ is 4 chars, GUID is 36 chars
+                            potential_guid = associated_guid[
+                                4:40
+                            ]  # p:0/ is 4 chars, GUID is 36 chars
                             if potential_guid in message_map:
                                 target_guid = potential_guid
 
                     if target_guid:
-                        tapback_type = self.TAPBACK_TYPES.get(row['associated_message_type'], "Unknown")
-                        sender = self._get_sender_name(self._row_get(row, 'handle_id'), bool(row['is_from_me']))
+                        tapback_type = self.TAPBACK_TYPES.get(
+                            row["associated_message_type"], "Unknown"
+                        )
+                        sender = self._get_sender_name(
+                            self._row_get(row, "handle_id"), bool(row["is_from_me"])
+                        )
 
                         # Parse component index from associated_message_guid
                         component_index = 0
-                        if associated_guid and associated_guid.startswith('p:'):
+                        if associated_guid and associated_guid.startswith("p:"):
                             try:
-                                parts = associated_guid.split('/')
+                                parts = associated_guid.split("/")
                                 if len(parts) > 0:
-                                    index_part = parts[0].replace('p:', '')
+                                    index_part = parts[0].replace("p:", "")
                                     component_index = int(index_part)
                             except (ValueError, IndexError):
                                 component_index = 0
 
-                        action = "Removed" if row['associated_message_type'] >= 3000 else "Added"
+                        action = "Removed" if row["associated_message_type"] >= 3000 else "Added"
 
                         tapback = Tapback(
                             type=tapback_type,
                             sender=sender,
                             action=action,
                             target_message_guid=target_guid,
-                            component_index=component_index
+                            component_index=component_index,
                         )
 
-                        message_map[target_guid].tapbacks.append(tapback)
+                        message_map[target_guid].tapbacks.append(tapback)  # type: ignore[union-attr]  # set to [] above
 
                 pbar.update(1)
 
             except Exception as exc:
-                print(f'Batch tapback loading generated an exception: {exc}')
+                print(f"Batch tapback loading generated an exception: {exc}")
 
         return messages
 
@@ -1304,34 +1355,36 @@ class iMessageDatabaseParser:
             ORDER BY m.date
             """
 
-            cursor = thread_conn.execute(query, (message_guid, f'p:0/{message_guid}'))
+            cursor = thread_conn.execute(query, (message_guid, f"p:0/{message_guid}"))
             tapbacks = []
 
             for row in cursor:
-                tapback_type = self.TAPBACK_TYPES.get(row['associated_message_type'], "Unknown")
-                sender = self._get_sender_name(self._row_get(row, 'handle_id'), bool(row['is_from_me']))
+                tapback_type = self.TAPBACK_TYPES.get(row["associated_message_type"], "Unknown")
+                sender = self._get_sender_name(
+                    self._row_get(row, "handle_id"), bool(row["is_from_me"])
+                )
 
                 # Parse component index from associated_message_guid
                 component_index = 0
-                if self._row_get(row, 'associated_message_guid'):
-                    guid = row['associated_message_guid']
-                    if guid.startswith('p:'):
+                if self._row_get(row, "associated_message_guid"):
+                    guid = row["associated_message_guid"]
+                    if guid.startswith("p:"):
                         try:
-                            parts = guid.split('/')
+                            parts = guid.split("/")
                             if len(parts) > 0:
-                                index_part = parts[0].replace('p:', '')
+                                index_part = parts[0].replace("p:", "")
                                 component_index = int(index_part)
                         except (ValueError, IndexError):
                             component_index = 0
 
-                action = "Removed" if row['associated_message_type'] >= 3000 else "Added"
+                action = "Removed" if row["associated_message_type"] >= 3000 else "Added"
 
                 tapback = Tapback(
                     type=tapback_type,
                     sender=sender,
                     action=action,
                     target_message_guid=message_guid,
-                    component_index=component_index
+                    component_index=component_index,
                 )
                 tapbacks.append(tapback)
 

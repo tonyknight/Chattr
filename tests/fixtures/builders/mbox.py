@@ -33,8 +33,10 @@ def _bare_address(header_value: str) -> str:
 
 def _address(person: family.Person, *, encode: bool = False) -> str:
     name = str(Header(person.name, "utf-8")) if encode else person.name
-    return formataddr((name, person.emails[0]), charset="utf-8") if encode else formataddr(
-        (name, person.emails[0])
+    return (
+        formataddr((name, person.emails[0]), charset="utf-8")
+        if encode
+        else formataddr((name, person.emails[0]))
     )
 
 
@@ -73,8 +75,17 @@ def _plain_reply(
     reply_to: list[str],
 ) -> Message:
     msg = MIMEText(body, "plain", "utf-8")
-    _headers(msg, sender=sender, recipient=recipient, subject=subject, moment=moment,
-             message_id=message_id, thread_id=thread_id, labels="Inbox,Família", reply_to=reply_to)
+    _headers(
+        msg,
+        sender=sender,
+        recipient=recipient,
+        subject=subject,
+        moment=moment,
+        message_id=message_id,
+        thread_id=thread_id,
+        labels="Inbox,Família",
+        reply_to=reply_to,
+    )
     return msg
 
 
@@ -92,17 +103,41 @@ def build_mbox(out_dir: Path) -> Path:
     # 1. João starts a thread (multipart/alternative, encoded From and Subject).
     first_id = "<20191102093000.1@example.org>"
     first = MIMEMultipart("alternative")
-    first.attach(MIMEText("Olá Maria,\n\nAs fotos da festa de São Martinho estão prontas.\n", "plain", "utf-8"))
-    first.attach(MIMEText("<p>Olá Maria,</p><p>As fotos da festa de <b>São Martinho</b> estão prontas.</p>", "html", "utf-8"))
-    _headers(first, sender=joao, recipient=me, subject="Fotos de São Martinho",
-             moment=family.at(2019, 11, 2, 9, 30, tz=lisbon), message_id=first_id,
-             thread_id=thread, labels="Inbox,Família")
+    first.attach(
+        MIMEText(
+            "Olá Maria,\n\nAs fotos da festa de São Martinho estão prontas.\n", "plain", "utf-8"
+        )
+    )
+    first.attach(
+        MIMEText(
+            "<p>Olá Maria,</p><p>As fotos da festa de <b>São Martinho</b> estão prontas.</p>",
+            "html",
+            "utf-8",
+        )
+    )
+    _headers(
+        first,
+        sender=joao,
+        recipient=me,
+        subject="Fotos de São Martinho",
+        moment=family.at(2019, 11, 2, 9, 30, tz=lisbon),
+        message_id=first_id,
+        thread_id=thread,
+        labels="Inbox,Família",
+    )
 
     # 2. Maria replies (plain text), quoting the thread.
     second_id = "<20191102141500.2@example.com>"
-    second = _plain_reply(me, joao, "Re: Fotos de São Martinho",
-                          family.at(2019, 11, 2, 9, 15, tz=east), second_id, thread,
-                          "Que maravilha! Send them all, please.\n", [first_id])
+    second = _plain_reply(
+        me,
+        joao,
+        "Re: Fotos de São Martinho",
+        family.at(2019, 11, 2, 9, 15, tz=east),
+        second_id,
+        thread,
+        "Que maravilha! Send them all, please.\n",
+        [first_id],
+    )
 
     # 3. João replies again with a PNG attachment.
     third_id = "<20191102160000.3@example.org>"
@@ -112,17 +147,35 @@ def build_mbox(out_dir: Path) -> Path:
     attachment.replace_header("Content-Type", 'image/png; name="familia.png"')
     attachment.add_header("Content-Disposition", "attachment", filename="familia.png")
     third.attach(attachment)
-    _headers(third, sender=joao, recipient=me, subject="Re: Fotos de São Martinho",
-             moment=family.at(2019, 11, 2, 16, 0, tz=lisbon), message_id=third_id,
-             thread_id=thread, labels="Inbox,Família", reply_to=[first_id, second_id])
+    _headers(
+        third,
+        sender=joao,
+        recipient=me,
+        subject="Re: Fotos de São Martinho",
+        moment=family.at(2019, 11, 2, 16, 0, tz=lisbon),
+        message_id=third_id,
+        thread_id=thread,
+        labels="Inbox,Família",
+        reply_to=[first_id, second_id],
+    )
 
     # 4. An HTML-only newsletter-style message from Ana.
     html_only = EmailMessage()
-    html_only.set_content("<html><body><h1>Wedding update</h1><p>The date is set: 14 June.</p></body></html>",
-                          subtype="html", charset="utf-8")
-    _headers(html_only, sender=ana, recipient=me, subject="Wedding update",
-             moment=family.at(2025, 1, 15, 20, 45), message_id="<20250115204500.4@example.com>",
-             thread_id="1790000000000000002", labels="Inbox,Important")
+    html_only.set_content(
+        "<html><body><h1>Wedding update</h1><p>The date is set: 14 June.</p></body></html>",
+        subtype="html",
+        charset="utf-8",
+    )
+    _headers(
+        html_only,
+        sender=ana,
+        recipient=me,
+        subject="Wedding update",
+        moment=family.at(2025, 1, 15, 20, 45),
+        message_id="<20250115204500.4@example.com>",
+        thread_id="1790000000000000002",
+        labels="Inbox,Important",
+    )
 
     # Fixed MIME boundaries and "From " separator lines keep the file byte-identical across builds
     # (the email package otherwise picks random boundaries, and mailbox stamps the current time).

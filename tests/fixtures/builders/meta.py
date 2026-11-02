@@ -48,19 +48,36 @@ def _messenger(root: Path) -> Path:
     photo_path.write_bytes(png(rgb=(10, 90, 200)))
     sent = family.at(2019, 7, 21, 16, 10, tz=lisbon)
     messages = [
-        {"sender_name": joao, "timestamp_ms": _ms(family.at(2019, 7, 20, 18, 0, tz=lisbon)),
-         "content": "Olá mana! Já chegaste a Lisboa?"},
-        {"sender_name": me, "timestamp_ms": _ms(family.at(2019, 7, 20, 18, 12, tz=lisbon)),
-         "content": "Cheguei! Vamos jantar amanhã?",
-         "reactions": [{"reaction": mojibake("❤️"), "actor": joao}]},
-        {"sender_name": joao, "timestamp_ms": _ms(sent),
-         "photos": [{"uri": photo_rel, "creation_timestamp": int(sent.timestamp())}]},
-        {"sender_name": joao, "timestamp_ms": _ms(family.at(2019, 7, 21, 16, 12, tz=lisbon)),
-         "content": "The restaurant: https://example.org/tasca-do-ze",
-         "share": {"link": "https://example.org/tasca-do-ze",
-                   "share_text": "Tasca do Zé — cozinha tradicional"}},
-        {"sender_name": me, "timestamp_ms": _ms(family.at(2019, 7, 21, 16, 20, tz=lisbon)),
-         "content": "Perfeito, até às oito. Beijinhos e saudações à família!"},
+        {
+            "sender_name": joao,
+            "timestamp_ms": _ms(family.at(2019, 7, 20, 18, 0, tz=lisbon)),
+            "content": "Olá mana! Já chegaste a Lisboa?",
+        },
+        {
+            "sender_name": me,
+            "timestamp_ms": _ms(family.at(2019, 7, 20, 18, 12, tz=lisbon)),
+            "content": "Cheguei! Vamos jantar amanhã?",
+            "reactions": [{"reaction": mojibake("❤️"), "actor": joao}],
+        },
+        {
+            "sender_name": joao,
+            "timestamp_ms": _ms(sent),
+            "photos": [{"uri": photo_rel, "creation_timestamp": int(sent.timestamp())}],
+        },
+        {
+            "sender_name": joao,
+            "timestamp_ms": _ms(family.at(2019, 7, 21, 16, 12, tz=lisbon)),
+            "content": "The restaurant: https://example.org/tasca-do-ze",
+            "share": {
+                "link": "https://example.org/tasca-do-ze",
+                "share_text": "Tasca do Zé — cozinha tradicional",
+            },
+        },
+        {
+            "sender_name": me,
+            "timestamp_ms": _ms(family.at(2019, 7, 21, 16, 20, tz=lisbon)),
+            "content": "Perfeito, até às oito. Beijinhos e saudações à família!",
+        },
     ]
     thread = {
         "participants": [{"name": mojibake(joao)}, {"name": mojibake(me)}],
@@ -77,10 +94,16 @@ def _instagram(root: Path) -> Path:
     me, rui = family.OWNER.usernames["instagram"], family.RUI.usernames["instagram"]
     lisbon = family.TZ_LISBON
     messages = [
-        {"sender_name": rui, "timestamp_ms": _ms(family.at(2022, 5, 3, 21, 30, tz=lisbon)),
-         "content": "Vi a tua foto do Douro — que vista!"},
-        {"sender_name": me, "timestamp_ms": _ms(family.at(2022, 5, 3, 21, 45, tz=lisbon)),
-         "content": "Obrigada! Temos de lá voltar todos juntos."},
+        {
+            "sender_name": rui,
+            "timestamp_ms": _ms(family.at(2022, 5, 3, 21, 30, tz=lisbon)),
+            "content": "Vi a tua foto do Douro — que vista!",
+        },
+        {
+            "sender_name": me,
+            "timestamp_ms": _ms(family.at(2022, 5, 3, 21, 45, tz=lisbon)),
+            "content": "Obrigada! Temos de lá voltar todos juntos.",
+        },
     ]
     thread = {
         "participants": [{"name": mojibake(rui)}, {"name": mojibake(me)}],

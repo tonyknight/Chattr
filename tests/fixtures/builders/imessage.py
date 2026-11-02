@@ -202,38 +202,84 @@ def build_imessage(out_dir: Path) -> Path:
 
         # One-to-one with Ana. Early messages come from an old database (seconds epoch).
         ana_chat = w.chat(ana, [ana], style=45)
-        w.message(ana_chat, family.at(2016, 3, 12, 9, 15), sender=ana,
-                  text="Bom dia Mãe! Landed safely.", nanoseconds=False)
-        _, hello = w.message(ana_chat, family.at(2016, 3, 12, 9, 17), sender=None,
-                             text="Thank God. Call me when you're settled.", nanoseconds=False)
-        w.message(ana_chat, family.at(2016, 3, 12, 9, 18), sender=ana, text=None,
-                  tapback=(2001, f"p:0/{hello}"), nanoseconds=False)  # loved
-        w.message(ana_chat, family.at(2023, 6, 4, 18, 30), sender=ana,
-                  text=family.LONG_MESSAGE, body_only=True)
-        photos_id, photos = w.message(ana_chat, family.at(2023, 6, 4, 18, 41), sender=ana,
-                                      text="Two of the best ones")
+        w.message(
+            ana_chat,
+            family.at(2016, 3, 12, 9, 15),
+            sender=ana,
+            text="Bom dia Mãe! Landed safely.",
+            nanoseconds=False,
+        )
+        _, hello = w.message(
+            ana_chat,
+            family.at(2016, 3, 12, 9, 17),
+            sender=None,
+            text="Thank God. Call me when you're settled.",
+            nanoseconds=False,
+        )
+        w.message(
+            ana_chat,
+            family.at(2016, 3, 12, 9, 18),
+            sender=ana,
+            text=None,
+            tapback=(2001, f"p:0/{hello}"),
+            nanoseconds=False,
+        )  # loved
+        w.message(
+            ana_chat,
+            family.at(2023, 6, 4, 18, 30),
+            sender=ana,
+            text=family.LONG_MESSAGE,
+            body_only=True,
+        )
+        photos_id, photos = w.message(
+            ana_chat, family.at(2023, 6, 4, 18, 41), sender=ana, text="Two of the best ones"
+        )
         same_second = family.at(2023, 6, 4, 18, 41)
         w.attach(photos_id, same_second, "IMG_0001.PNG", png(rgb=(180, 140, 90)), "image/png")
         w.attach(photos_id, same_second, "IMG_0002.PNG", png(rgb=(90, 140, 180)), "image/png")
-        w.message(ana_chat, family.at(2023, 6, 4, 18, 45), sender=None, text=None,
-                  tapback=(2000, f"p:1/{photos}"))  # liked the second part (an attachment)
-        w.message(ana_chat, family.at(2023, 6, 4, 18, 46), sender=None, text=None,
-                  tapback=(3000, f"p:1/{photos}"))  # like removed
+        w.message(
+            ana_chat,
+            family.at(2023, 6, 4, 18, 45),
+            sender=None,
+            text=None,
+            tapback=(2000, f"p:1/{photos}"),
+        )  # liked the second part (an attachment)
+        w.message(
+            ana_chat,
+            family.at(2023, 6, 4, 18, 46),
+            sender=None,
+            text=None,
+            tapback=(3000, f"p:1/{photos}"),
+        )  # like removed
 
         # Group chat: owner, Ana and João.
         group = w.chat("chat100000000000000001", [ana, joao], style=43, name=family.GROUP_NAME)
-        _, plan = w.message(group, family.at(2024, 12, 20, 19, 0), sender=joao,
-                            text="Christmas at my place this year?")
-        w.message(group, family.at(2024, 12, 20, 19, 2), sender=ana, text=None,
-                  tapback=(2003, f"bp:{plan}"))  # laughed, legacy bp: form
-        sticker_id, _ = w.message(group, family.at(2024, 12, 20, 19, 5), sender=None,
-                                  text="Yes! I'll bring the bacalhau.")
+        _, plan = w.message(
+            group,
+            family.at(2024, 12, 20, 19, 0),
+            sender=joao,
+            text="Christmas at my place this year?",
+        )
+        w.message(
+            group,
+            family.at(2024, 12, 20, 19, 2),
+            sender=ana,
+            text=None,
+            tapback=(2003, f"bp:{plan}"),
+        )  # laughed, legacy bp: form
+        sticker_id, _ = w.message(
+            group, family.at(2024, 12, 20, 19, 5), sender=None, text="Yes! I'll bring the bacalhau."
+        )
         w.attach(sticker_id, family.at(2024, 12, 20, 19, 5), "sticker.gif", GIF_1X1, "image/gif")
 
         # A message from an unknown number.
         stranger = w.chat(family.UNKNOWN_HANDLE, [family.UNKNOWN_HANDLE], style=45)
-        w.message(stranger, family.at(2025, 1, 8, 12, 0), sender=family.UNKNOWN_HANDLE,
-                  text="Your package could not be delivered.")
+        w.message(
+            stranger,
+            family.at(2025, 1, 8, 12, 0),
+            sender=family.UNKNOWN_HANDLE,
+            text="Your package could not be delivered.",
+        )
         conn.commit()
     finally:
         conn.close()

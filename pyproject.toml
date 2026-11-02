@@ -36,3 +36,18 @@ chattr = ["templates/*.html", "defaults/*.json", "defaults/Services/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --import-mode=importlib"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+# Type-check baseline for Chattr's legacy code: real type errors are reported, missing
+# annotations are not yet (ratcheted towards strict in later work).
+[tool.mypy]
+python_version = "3.10"
+files = ["src/chattr"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tqdm", "tqdm.*", "vobject", "vobject.*", "ffmpeg", "ffmpeg.*", "pillow_heif"]
+ignore_missing_imports = true
