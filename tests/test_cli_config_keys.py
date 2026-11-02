@@ -1,4 +1,4 @@
-"""Every configuration key the CLI reads exists in a freshly prepared Chattr root."""
+"""Every configuration key the CLI and its commands read exists in a fresh Chattr root."""
 
 from __future__ import annotations
 
@@ -11,12 +11,16 @@ import chattr
 from chattr import preflight
 from chattr.config import Settings
 
-CLI_SOURCE = Path(chattr.__file__).resolve().parent / "cli.py"
+PACKAGE = Path(chattr.__file__).resolve().parent
+CLI_SOURCES = (PACKAGE / "cli.py", PACKAGE / "commands.py")
 KEY_CALL = re.compile(r"""\.get(?:_expanded_path)?\(\s*['"]([a-z_]+(?:\.[a-z_]+)+)['"]""")
 
 
 def cli_keys() -> list[str]:
-    return sorted(set(KEY_CALL.findall(CLI_SOURCE.read_text(encoding="utf-8"))))
+    found = set()
+    for source in CLI_SOURCES:
+        found.update(KEY_CALL.findall(source.read_text(encoding="utf-8")))
+    return sorted(found)
 
 
 @pytest.fixture
@@ -36,7 +40,7 @@ def test_the_cli_reads_configuration_keys() -> None:
 @pytest.mark.parametrize("key", cli_keys())
 def test_every_cli_key_resolves(settings: Settings, key: str) -> None:
     missing = object()
-    assert settings.get(key, missing) is not missing, f"cli.py reads '{key}', which doesn't exist"
+    assert settings.get(key, missing) is not missing, f"'{key}' is read but doesn't exist"
 
 
 def test_chattr_cli_with_root_starts_and_exits_cleanly(tmp_path: Path) -> None:

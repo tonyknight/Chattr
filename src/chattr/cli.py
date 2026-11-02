@@ -31,7 +31,7 @@ from chattr.imessage_export import (  # noqa: F401  (re-exported for older calle
     process_message_attachments,
 )
 from chattr.importing import import_messages
-from chattr import __version__
+from chattr import __version__, commands
 
 # iMessage operational functions migrated from imessage_main.py
 
@@ -472,43 +472,189 @@ def database_path(settings: Settings) -> Path:
     return Path(settings.root) / "Database" / "chattr.sqlite"
 
 
+IMESSAGE_ONLY = (
+    "contacts",
+    "region",
+    "attachment_root",
+    "batch_size",
+    "attachment_workers",
+    "workers",
+    "spam_mode",
+    "chat",
+    "limit",
+    "verbose",
+)
+NOT_FOR_IMESSAGE = ("route", "html", "aliases", "owner")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="chattr-cli", description="Convert message exports into readable archives."
+        prog="chattr-cli",
+        description="Convert message exports into readable archives. "
+        "With no command, the step-by-step menu runs.",
     )
     parser.add_argument("--version", action="version", version=f"chattr {__version__}")
     parser.add_argument("--root", help="Chattr data folder (skips the first-run prompt)")
+    sub = parser.add_subparsers(dest="command", metavar="command")
+
+    convert = sub.add_parser("convert", help="convert one export")
+    convert.add_argument("service", type=str.lower, choices=["whatsapp", "messenger", "imessage"])
+    convert.add_argument(
+        "export", nargs="?", help="the export file (for iMessage, chat.db; default: configured)"
+    )
+    route = convert.add_mutually_exclusive_group()
+    route.add_argument(
+        "--db",
+        dest="route",
+        action="store_const",
+        const="central",
+        help="import into the central archive (the default)",
+    )
+    route.add_argument(
+        "--json",
+        dest="route",
+        action="store_const",
+        const="service",
+        help="write JSON to the service's output folder instead",
+    )
+    convert.add_argument("--html", action="store_true", help="also write an HTML page")
+    convert.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
+    convert.add_argument("--aliases", help="JSON file of {identifier or name: person name}")
+    imessage = convert.add_argument_group("iMessage options")
+    imessage.add_argument("--contacts", help="VCF contacts file used to name senders")
+    imessage.add_argument("--region", help="phone number region for contacts (default: US)")
+    imessage.add_argument("--attachment-root", help="folder holding the original attachments")
+    imessage.add_argument("--batch-size", type=int, help="messages per batch")
+    imessage.add_argument("--attachment-workers", type=int, help="parallel attachment workers")
+    imessage.add_argument("--workers", type=int, help="parallel message workers")
+    imessage.add_argument("--spam-mode", choices=commands.SPAM_MODES, help="spam filtering")
+    imessage.add_argument("--chat", type=int, help="only this chat ID (see `chats`)")
+    imessage.add_argument("--limit", type=int, help="at most this many messages")
+    imessage.add_argument("--verbose", action="store_true", help="print every message")
+
+    html = sub.add_parser("html", help="render the central archive as one HTML page")
+    html.add_argument("--out", help="output file (default: Output/Chattr/All_Chats_Archive.html)")
+    html.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
+
+    chats = sub.add_parser("chats", help="list the chats in an iMessage database")
+    chats.add_argument("database", nargs="?", help="chat.db (default: configured)")
+
+    doctor = sub.add_parser("doctor", help="check an iMessage database")
+    doctor.add_argument("database", nargs="?", help="chat.db (default: configured)")
+    doctor.add_argument(
+        "--check",
+        action="append",
+        choices=commands.DOCTOR_CHECKS,
+        help="run only this check (repeatable; default: all)",
+    )
+    for command in (convert, html, chats, doctor):
+        # `--root` works before or after the command; SUPPRESS keeps an earlier value.
+        command.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
 
 
-def main(argv=None):
-    """Main function to orchestrate the chat export processing."""
-    args = build_parser().parse_args(argv)
-    load_dotenv("API_Key.env")
+def _check_convert_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject options that don't apply to the chosen service, before anything runs."""
 
-    # Run preflight check - ensures the Chattr root exists (never prompts with --root)
-    chattr_root = run_preflight(args.root)
+    def given(name: str) -> bool:
+        return getattr(args, name) not in (None, False)
 
-    if not chattr_root:
-        print("\n❌ Failed to initialize Chattr. Exiting.")
+    def flag(name: str) -> str:
+        return "--db/--json" if name == "route" else "--" + name.replace("_", "-")
+
+    if args.service == "imessage":
+        wrong = [flag(n) for n in NOT_FOR_IMESSAGE if given(n)]
+        if wrong:
+            parser.error(
+                f"{', '.join(wrong)} can't be used with iMessage yet: iMessage converts to its "
+                "native JSON in Output/iMessage/."
+            )
+        return
+    wrong = [flag(n) for n in IMESSAGE_ONLY if given(n)]
+    if wrong:
+        parser.error(f"{', '.join(wrong)} applies to iMessage only.")
+    if not args.export:
+        parser.error(f"convert {args.service}: give the export file to convert.")
+
+
+def _configured_chat_db(settings: Settings) -> str:
+    return settings.get_expanded_path("services.imessage.preferences.database.default_db_path")
+
+
+def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
+    if args.service == "imessage":
+        result = commands.convert_imessage(
+            settings,
+            db_path=args.export,
+            contacts=args.contacts,
+            region=args.region or "US",
+            attachment_root=args.attachment_root,
+            batch_size=args.batch_size,
+            attachment_workers=args.attachment_workers,
+            workers=args.workers,
+            spam_mode=args.spam_mode,
+            chat=args.chat,
+            limit=args.limit,
+            verbose=args.verbose,
+        )
+        print(f"iMessage: {result.counts.total:,} messages → {result.json_path}")
+        return 0
+    route = args.route or "central"
+    result = commands.convert(
+        settings,
+        args.service,
+        args.export,
+        route=route,
+        html=args.html,
+        owner=args.owner,
+        aliases=args.aliases,
+    )
+    counts = result.counts
+    where = commands.central_database(settings) if route == "central" else result.json_path
+    print(
+        f"{result.service}: {counts.inserted:,} new, {counts.updated:,} updated, "
+        f"{counts.unchanged:,} already archived → {where}"
+    )
+    if result.html_path:
+        print(f"HTML: {result.html_path}")
+    return 0
+
+
+def _run_html(settings: Settings, args: argparse.Namespace) -> int:
+    path = commands.generate_html(settings, out=args.out, owner=args.owner)
+    if path is None:
+        print("The central archive is empty: convert an export first.")
         return 1
+    print(f"HTML: {path}")
+    return 0
 
-    # Log successful preflight (silent if structure already existed)
-    import logging
 
-    logging.basicConfig(level=logging.INFO)
-    logging.info(f"Chattr initialized at: {chattr_root}")
+def _run_chats(settings: Settings, args: argparse.Namespace) -> int:
+    for chat_id, name in commands.list_chats(args.database or _configured_chat_db(settings)):
+        print(f"{chat_id:>5}  {name}")
+    return 0
 
-    # Load configuration from the Chattr root
-    try:
-        config = load_settings(chattr_root)
-    except ConfigurationError as e:
-        print(f"Configuration error: {e}")
-        return 1
-    output_dir = config.get_expanded_path("global.general.output_directory")
+
+def _run_doctor(settings: Settings, args: argparse.Namespace) -> int:
+    database = args.database or _configured_chat_db(settings)
+    results = [commands.doctor(database, check) for check in args.check or commands.DOCTOR_CHECKS]
+    return 0 if all(results) else 1
+
+
+SUBCOMMANDS = {
+    "convert": _run_convert,
+    "html": _run_html,
+    "chats": _run_chats,
+    "doctor": _run_doctor,
+}
+
+
+def run_menu(settings: Settings) -> int:
+    """The step-by-step menu; returns the exit status."""
+    output_dir = settings.get_expanded_path("global.general.output_directory")
     os.makedirs(output_dir, exist_ok=True)
 
-    db_path = database_path(config)
+    db_path = database_path(settings)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db_manager = DatabaseManager(db_path=str(db_path))
 
@@ -534,6 +680,35 @@ def main(argv=None):
             print("Invalid choice. Please try again.")
 
         print("\n--------------------")
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Run a `chattr-cli` subcommand, or the step-by-step menu when none is given."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "convert":
+        _check_convert_options(parser, args)
+    load_dotenv("API_Key.env")
+
+    # Ensure the Chattr root exists (never prompts with --root)
+    chattr_root = run_preflight(args.root)
+    if not chattr_root:
+        print("\n❌ Failed to initialize Chattr. Exiting.")
+        return 1
+
+    try:
+        settings = load_settings(chattr_root)
+    except ConfigurationError as e:
+        print(f"Configuration error: {e}")
+        return 1
+
+    if args.command is None:
+        return run_menu(settings)
+    try:
+        return SUBCOMMANDS[args.command](settings, args)
+    except commands.CommandError as e:
+        print(f"❌ {e}")
+        return 1
 
 
 if __name__ == "__main__":

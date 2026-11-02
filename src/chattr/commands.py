@@ -168,10 +168,6 @@ def generate_html(
     return path
 
 
-def _imessage_preference(settings: Settings, key: str, default: Any) -> Any:
-    return settings.get(f"services.imessage.preferences.{key}", default)
-
-
 def _print_spam_stats(parser: iMessageDatabaseParser) -> None:
     stats = parser.get_spam_filtering_stats()
     if not stats or not stats["total_suppressed"]:
@@ -213,8 +209,8 @@ def convert_imessage(
     contacts: Optional[PathLike] = None,
     region: str = "US",
     attachment_root: Optional[PathLike] = None,
-    batch_size: int = 1000,
-    attachment_workers: int = 4,
+    batch_size: Optional[int] = None,
+    attachment_workers: Optional[int] = None,
     workers: Optional[int] = None,
     spam_mode: Optional[str] = None,
     chat: Optional[int] = None,
@@ -225,8 +221,8 @@ def convert_imessage(
     """Export an iMessage database (`chat.db`) to iMessage's native JSON in `Output/iMessage/`.
 
     Unset options come from `services.imessage.preferences`. Archival copies of attachments
-    are written only when `attachments_dir` is given. Import into the central archive is
-    ticket 07.
+    are written only when `attachments_dir` is given. Import into the central archive comes
+    later (ticket 07).
     """
     db_path = db_path or settings.get_expanded_path(
         "services.imessage.preferences.database.default_db_path"
@@ -234,8 +230,16 @@ def convert_imessage(
     attachment_root = attachment_root or settings.get_expanded_path(
         "services.imessage.preferences.database.default_attachments_path"
     )
-    spam_mode = spam_mode or _imessage_preference(settings, "spam_filtering.mode", "aggressive")
-    workers = workers or int(_imessage_preference(settings, "performance.workers", 4))
+    spam_mode = spam_mode or settings.get(
+        "services.imessage.preferences.spam_filtering.mode", "aggressive"
+    )
+    workers = workers or int(settings.get("services.imessage.preferences.performance.workers", 4))
+    batch_size = batch_size or int(
+        settings.get("services.imessage.preferences.performance.batch_size", 1000)
+    )
+    attachment_workers = attachment_workers or int(
+        settings.get("services.imessage.preferences.attachments.general.max_attachment_workers", 4)
+    )
     if not db_path:
         raise CommandError("No iMessage database given and none configured.")
     out_path = (
