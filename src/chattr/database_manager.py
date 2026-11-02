@@ -166,6 +166,11 @@ class DatabaseManager:
         ).fetchone()
         return int(row[0])
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """The open database, for readers (the renderer) that need their own queries."""
+        return self._db
+
     # --- People -----------------------------------------------------------------------------
 
     def resolve_people(
