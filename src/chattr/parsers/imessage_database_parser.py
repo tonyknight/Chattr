@@ -223,6 +223,9 @@ class Message:
     # Optional fields for enriched data
     attachments: Optional[List["Attachment"]] = field(default=None)
     tapbacks: Optional[List["Tapback"]] = field(default=None)
+    # Why the spam filter flagged this message (None when kept as ordinary content).
+    # Flagged messages are still returned: filtering tags, it never drops.
+    spam_reason: Optional[str] = None
 
 
 @dataclass
@@ -352,6 +355,7 @@ class iMessageDatabaseParser:
         # Performance impact: <0.1s for 110K messages (negligible)
         # Quality improvement: 99.424% → 99.887% text extraction rate
         self.enable_spam_filtering = enable_spam_filtering
+        self._spam_lock = threading.Lock()  # batches run in parallel and share the stats
         self.spam_filter: Optional[MessageSpamFilter]
         if enable_spam_filtering:
             self.spam_filter = MessageSpamFilter(
@@ -833,70 +837,65 @@ class iMessageDatabaseParser:
     def _execute_message_query(self, query: str, params: List) -> List[Message]:
         """Execute message query and return Message objects"""
         cursor = self.conn.execute(query, params)
-        messages = []
+        return [self._row_to_message(row) for row in cursor]
 
-        for row in cursor:
-            # Convert timestamp
-            timestamp = self._apple_timestamp_to_datetime(row["date"])
+    def _row_to_message(self, row: sqlite3.Row) -> Message:
+        """Build a Message from a query row (shared by the single and parallel paths).
 
-            # Get sender and chat names
-            sender = self._get_sender_name(self._row_get(row, "handle_id"), bool(row["is_from_me"]))
-            chat_name = self._get_chat_name(self._row_get(row, "chat_id"))
+        The text comes from `text`, or from the decoded `attributedBody` when that is empty.
+        The spam filter, when enabled, tags the message with its reason rather than dropping it.
+        """
+        timestamp = self._apple_timestamp_to_datetime(row["date"])
+        sender = self._get_sender_name(self._row_get(row, "handle_id"), bool(row["is_from_me"]))
+        chat_name = self._get_chat_name(self._row_get(row, "chat_id"))
 
-            # Extract text with fallback to attributedBody
-            text = self._row_get(row, "text")
-            if text is None:
-                attributed_body = self._row_get(row, "attributedBody")
-                if attributed_body:
-                    text = self._extract_text_from_attributed_body(attributed_body)
+        text = self._row_get(row, "text")
+        if text is None:
+            attributed_body = self._row_get(row, "attributedBody")
+            if attributed_body:
+                text = self._extract_text_from_attributed_body(attributed_body)
 
-            # Apply spam filtering before creating message object
-            # This removes low-value messages (RCS system, spam, etc.) early in the pipeline
-            # for better performance and data quality
-            if self.enable_spam_filtering and self.spam_filter:
-                # Prepare message data for spam filtering analysis
-                message_data = {
-                    "service": self._row_get(row, "service"),
-                    "sender": sender,
-                    "text": text,
-                    "is_read": bool(self._row_get(row, "is_read", False)),
-                    "is_from_me": bool(row["is_from_me"]),
-                    "chat": chat_name,
-                    "attachments_count": self._row_get(row, "num_attachments", 0),
-                    "tapbacks_count": 0,  # Tapbacks processed later, safe to assume 0 here
-                }
+        spam_reason = None
+        if self.enable_spam_filtering and self.spam_filter:
+            associated_type = self._row_get(row, "associated_message_type") or 0
+            message_data = {
+                "service": self._row_get(row, "service"),
+                "sender": sender,
+                "text": text,
+                "is_read": bool(self._row_get(row, "is_read", False)),
+                "is_from_me": bool(row["is_from_me"]),
+                "chat": chat_name,
+                "attachments_count": self._row_get(row, "num_attachments", 0),
+                # A tapback has no text of its own; it must never look like system noise.
+                "tapbacks_count": 1 if 2000 <= associated_type <= 3007 else 0,
+            }
+            with self._spam_lock:
+                suppress, reason = self.spam_filter.should_suppress_message(message_data)
+            spam_reason = reason if suppress else None
 
-                should_suppress, reason = self.spam_filter.should_suppress_message(message_data)
-                if should_suppress:
-                    # Skip this message - identified as spam/system noise
-                    # This improves data quality with minimal performance cost
-                    continue
-
-            message = Message(
-                rowid=row["rowid"],
-                guid=row["guid"],
-                text=text,
-                service=self._row_get(row, "service"),
-                handle_id=self._row_get(row, "handle_id"),
-                date=row["date"],
-                date_read=self._row_get(row, "date_read"),
-                date_delivered=self._row_get(row, "date_delivered"),
-                is_from_me=bool(row["is_from_me"]),
-                is_read=bool(self._row_get(row, "is_read", False)),
-                item_type=self._row_get(row, "item_type", 0),
-                associated_message_guid=self._row_get(row, "associated_message_guid"),
-                associated_message_type=self._row_get(row, "associated_message_type"),
-                balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
-                associated_message_emoji=self._row_get(row, "associated_message_emoji"),
-                chat_id=self._row_get(row, "chat_id"),
-                num_attachments=self._row_get(row, "num_attachments", 0),
-                timestamp=timestamp,
-                sender=sender,
-                chat_name=chat_name,
-            )
-            messages.append(message)
-
-        return messages
+        return Message(
+            rowid=row["rowid"],
+            guid=row["guid"],
+            text=text,
+            service=self._row_get(row, "service"),
+            handle_id=self._row_get(row, "handle_id"),
+            date=row["date"],
+            date_read=self._row_get(row, "date_read"),
+            date_delivered=self._row_get(row, "date_delivered"),
+            is_from_me=bool(row["is_from_me"]),
+            is_read=bool(self._row_get(row, "is_read", False)),
+            item_type=self._row_get(row, "item_type", 0),
+            associated_message_guid=self._row_get(row, "associated_message_guid"),
+            associated_message_type=self._row_get(row, "associated_message_type"),
+            balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
+            associated_message_emoji=self._row_get(row, "associated_message_emoji"),
+            chat_id=self._row_get(row, "chat_id"),
+            num_attachments=self._row_get(row, "num_attachments", 0),
+            timestamp=timestamp,
+            sender=sender,
+            chat_name=chat_name,
+            spam_reason=spam_reason,
+        )
 
     def get_all_messages_parallel(
         self, chat_filter: Optional[int] = None, max_workers: int = 4, batch_size: int = 1000
@@ -907,8 +906,7 @@ class iMessageDatabaseParser:
         This method provides high-performance message extraction using multiple worker threads.
         Each worker processes a batch of messages independently for optimal throughput.
 
-        Note: Currently does not apply spam filtering (limitation to be addressed).
-        For spam filtering, use single-threaded mode with --limit parameter.
+        The spam filter runs here too: flagged messages carry `spam_reason` and are kept.
 
         Performance: Processes 110K messages in ~3.5s (vs ~1.7s single-threaded)
         Memory usage: Optimized with batch processing
@@ -1019,48 +1017,7 @@ class iMessageDatabaseParser:
                 params.append(chat_filter)
 
             cursor = thread_conn.execute(query, params)
-            messages = []
-
-            for row in cursor:
-                # Convert timestamp
-                timestamp = self._apple_timestamp_to_datetime(row["date"])
-
-                # Get sender and chat names
-                sender = self._get_sender_name(
-                    self._row_get(row, "handle_id"), bool(row["is_from_me"])
-                )
-                chat_name = self._get_chat_name(self._row_get(row, "chat_id"))
-
-                # Extract text with fallback to attributedBody
-                text = self._row_get(row, "text")
-                if text is None:
-                    attributed_body = self._row_get(row, "attributedBody")
-                    if attributed_body:
-                        text = self._extract_text_from_attributed_body(attributed_body)
-
-                message = Message(
-                    rowid=row["rowid"],
-                    guid=row["guid"],
-                    text=text,
-                    service=self._row_get(row, "service"),
-                    handle_id=self._row_get(row, "handle_id"),
-                    date=row["date"],
-                    date_read=self._row_get(row, "date_read"),
-                    date_delivered=self._row_get(row, "date_delivered"),
-                    is_from_me=bool(row["is_from_me"]),
-                    is_read=bool(self._row_get(row, "is_read", False)),
-                    item_type=self._row_get(row, "item_type", 0),
-                    associated_message_guid=self._row_get(row, "associated_message_guid"),
-                    associated_message_type=self._row_get(row, "associated_message_type"),
-                    balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
-                    associated_message_emoji=self._row_get(row, "associated_message_emoji"),
-                    chat_id=self._row_get(row, "chat_id"),
-                    num_attachments=self._row_get(row, "num_attachments", 0),
-                    timestamp=timestamp,
-                    sender=sender,
-                    chat_name=chat_name,
-                )
-                messages.append(message)
+            messages = [self._row_to_message(row) for row in cursor]
 
             return messages
 

@@ -176,7 +176,9 @@ def _print_spam_stats(parser: iMessageDatabaseParser) -> None:
     stats = parser.get_spam_filtering_stats()
     if not stats or not stats["total_suppressed"]:
         return
-    print(f"Spam filtering removed {stats['total_suppressed']:,} low-value messages:")
+    print(
+        f"Spam filtering flagged {stats['total_suppressed']:,} low-value messages (kept, tagged):"
+    )
     for category, count in stats.items():
         if category != "total_suppressed" and count > 0:
             print(f"  - {category.replace('_', ' ').title()}: {count:,}")

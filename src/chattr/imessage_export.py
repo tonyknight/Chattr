@@ -116,6 +116,7 @@ def export_to_json(
             "service": message.service,
             "is_from_me": message.is_from_me,
             "is_read": message.is_read,
+            "spam_reason": message.spam_reason,
             "attachments": [
                 {
                     "original_filename": att.transfer_name or att.filename,
