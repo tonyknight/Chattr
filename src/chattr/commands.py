@@ -25,6 +25,7 @@ from chattr.config import Settings
 from chattr.pages import render_pages
 from chattr.people import Aliases, Contacts, PeopleResolver
 from chattr.render import Renderer
+from chattr.rebuild import RebuildError, RebuildResult, rebuild_database
 from chattr.records import ConversationRecord
 from chattr.transcription import Transcriber
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
@@ -407,6 +408,20 @@ def generate_html(
             Path(out) if out else output_folder(settings, "Chattr"),
             attachment_roots(settings, attachments_dirs),
         )
+
+
+def rebuild(
+    settings: Settings, site: Optional[PathLike] = None, db_path: Optional[PathLike] = None
+) -> RebuildResult:
+    """Recreate the database from the rendered pages (`chattr.rebuild`)."""
+    folder = Path(site) if site else Path(settings.root) / "Output" / "Chattr"
+    if not folder.is_dir():
+        raise CommandError(f"No Chattr pages found: {folder} is not a folder.")
+    try:
+        result = rebuild_database(folder, db_path or central_database(settings))
+    except RebuildError as error:
+        raise CommandError(str(error)) from error
+    return result
 
 
 def _print_spam_stats(parser: iMessageDatabaseParser) -> None:

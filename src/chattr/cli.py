@@ -5,6 +5,7 @@ Both call the same functions in `chattr.commands`, so anything the menu does can
     chattr-cli [--root DIR] convert <service> [export] [--db | --json] [--html] ...
     chattr-cli [--root DIR] html [--out DIR] [--attachments-dir DIR]
     chattr-cli [--root DIR] people [--contacts F] [--aliases F] [--owner NAME] [--json]
+    chattr-cli [--root DIR] rebuild [--from DIR] [--db FILE]
     chattr-cli [--root DIR] chats [chat.db]
     chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
 
@@ -136,6 +137,12 @@ def build_parser() -> argparse.ArgumentParser:
     people.add_argument("--region", help="phone number region for contacts (default: US)")
     people.add_argument("--json", action="store_true", help="print the unresolved handles as JSON")
 
+    rebuild = sub.add_parser(
+        "rebuild", help="recreate chattr.sqlite from the rendered pages (their data islands)"
+    )
+    rebuild.add_argument("--from", dest="site", help="the pages' folder (default: Output/Chattr)")
+    rebuild.add_argument("--db", help="the database to create (default: Database/chattr.sqlite)")
+
     chats = sub.add_parser("chats", help="list the chats in an iMessage database")
     chats.add_argument("database", nargs="?", help="chat.db (default: configured)")
 
@@ -147,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=commands.DOCTOR_CHECKS,
         help="run only this check (repeatable; default: all)",
     )
-    for command in (convert, html, people, chats, doctor):
+    for command in (convert, html, people, rebuild, chats, doctor):
         # `--root` works before or after the command; SUPPRESS keeps an earlier value.
         command.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
@@ -319,6 +326,20 @@ def _run_people(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_rebuild(settings: Settings, args: argparse.Namespace) -> int:
+    result = commands.rebuild(settings, site=args.site, db_path=args.db)
+    print(
+        f"Rebuilt from {result.pages} page(s): {result.conversations} conversations, "
+        f"{result.messages} messages, {result.attachments} attachments, "
+        f"{result.reactions} reactions, {result.handles} handles."
+    )
+    if result.skipped:
+        print(f"{len(result.skipped)} page(s) skipped:")
+        for reason in result.skipped:
+            print(f"  {reason}")
+    return 0
+
+
 def _run_chats(settings: Settings, args: argparse.Namespace) -> int:
     _print_chats(args.database or _configured_chat_db(settings))
     return 0
@@ -334,6 +355,7 @@ SUBCOMMANDS = {
     "convert": _run_convert,
     "html": _run_html,
     "people": _run_people,
+    "rebuild": _run_rebuild,
     "chats": _run_chats,
     "doctor": _run_doctor,
 }

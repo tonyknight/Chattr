@@ -180,6 +180,9 @@ class Renderer:
             if row["sender_handle_id"]:
                 handle_ids.add(row["sender_handle_id"])
             messages.append(self._message_document(row))
+            handle_ids |= {
+                r["sender_handle_id"] for r in self.reactions.get(mid, []) if r["sender_handle_id"]
+            }
         handles = [self._handle_document(self.handles[h]) for h in sorted(handle_ids)]
         conversations = []
         for cid in spec.conversation_ids:
@@ -237,9 +240,7 @@ class Renderer:
             {
                 "sha256": a["sha256"],
                 "original_filename": a["original_filename"],
-                "archival_filename": a["archival_filename"]
-                or (a["storage_path"] or "").rsplit("/", 1)[-1]
-                or None,
+                "archival_filename": a["archival_filename"],
                 "mime_type": a["mime_type"],
                 "size": a["size"],
                 "storage_path": a["storage_path"],
