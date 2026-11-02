@@ -1,6 +1,6 @@
 {
   "header": {
-    "description": "Chatter WhatsApp Service Configuration",
+    "description": "Chattr WhatsApp Service Configuration",
     "version": "2.0.0",
     "last_updated": "2025-11-11",
     "service": "WhatsApp"

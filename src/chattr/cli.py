@@ -245,7 +245,7 @@ def list_chats(db: iMessageDatabaseParser):
 def main_menu():
     """Displays the main menu and handles user choices for parsing."""
     print("\n" + "="*70)
-    print("💬 Chatter - Your Message Archive Swiss Army Knife")
+    print("💬 Chattr - Your Message Archive Swiss Army Knife")
     print("="*70)
     print("\nSelect an option:")
     print("  1. Import WhatsApp Chats")
@@ -659,17 +659,17 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     load_dotenv("API_Key.env")
 
-    # Run preflight check - ensures Chatter directory structure exists
-    chatter_root = run_preflight()
+    # Run preflight check - ensures Chattr directory structure exists
+    chattr_root = run_preflight()
 
-    if not chatter_root:
-        print("\n❌ Failed to initialize Chatter. Exiting.")
+    if not chattr_root:
+        print("\n❌ Failed to initialize Chattr. Exiting.")
         return
 
     # Log successful preflight (silent if structure already existed)
     import logging
     logging.basicConfig(level=logging.INFO)
-    logging.info(f"Chatter initialized at: {chatter_root}")
+    logging.info(f"Chattr initialized at: {chattr_root}")
 
     # Load configuration
     try:

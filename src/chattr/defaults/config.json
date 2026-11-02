@@ -1,6 +1,6 @@
 {
   "header": {
-    "description": "Chatter Global Configuration - Application-wide settings",
+    "description": "Chattr Global Configuration - Application-wide settings",
     "version": "2.0.0",
     "last_updated": "2025-11-11",
     "schema_notes": "Global settings only - service-specific configs are in Services/ folder"
@@ -8,8 +8,8 @@
 
   "global": {
     "general": {
-      "output_directory": "{CHATTER_ROOT}/Output",
-      "temp_directory": "{CHATTER_ROOT}/temp",
+      "output_directory": "{CHATTR_ROOT}/Output",
+      "temp_directory": "{CHATTR_ROOT}/temp",
       "log_level": "INFO"
     },
 
@@ -40,7 +40,7 @@
     "database": {
       "unified_schema": {
         "enabled": false,
-        "file": "{CHATTER_ROOT}/Database/chatter.sqlite",
+        "file": "{CHATTR_ROOT}/Database/chattr.sqlite",
         "version": "1.0"
       },
       "per_service_exports": {

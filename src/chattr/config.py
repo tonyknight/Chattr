@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Configuration Manager for Chat2HTML
+Configuration Manager for Chattr
 
-This module provides centralized configuration management for all Chat2HTML services.
+This module provides centralized configuration management for all Chattr services.
 It loads default settings from config.json and allows runtime overrides.
 
 Features:
@@ -26,7 +26,7 @@ class ConfigurationError(Exception):
 
 class ConfigManager:
     """
-    Centralized configuration manager for Chat2HTML
+    Centralized configuration manager for Chattr
     
     Handles loading, validation, and access to configuration settings
     across all supported messaging services.

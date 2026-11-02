@@ -1,5 +1,5 @@
 """
-Chatter Preflight Module
+Chattr Preflight Module
 Handles first-run setup, directory structure creation, and configuration initialization.
 """
 
@@ -11,11 +11,11 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 
 
-# Directory structure to create in user's Chatter folder
-CHATTER_STRUCTURE = {
+# Directory structure to create in user's Chattr folder
+CHATTR_STRUCTURE = {
     "Database": [],
     "Output": [
-        "Chatter",
+        "Chattr",
         "Messenger", 
         "GoogleVoice",
         "Voicemail",
@@ -27,13 +27,13 @@ CHATTER_STRUCTURE = {
 }
 
 # Hidden config file in user's home directory
-CHATTER_CONFIG_FILE = ".chatter.json"
+CHATTR_CONFIG_FILE = ".chattr.json"
 
-# Default Chatter root location
-DEFAULT_CHATTER_ROOT = "~/Documents/Chatter"
+# Default Chattr root location
+DEFAULT_CHATTR_ROOT = "~/Documents/Chattr"
 
 # Current version
-CHATTER_VERSION = "2.0.0"
+CHATTR_VERSION = "2.0.0"
 
 
 def get_home_directory() -> Path:
@@ -41,19 +41,19 @@ def get_home_directory() -> Path:
     return Path.home()
 
 
-def get_chatter_config_path() -> Path:
-    """Get the path to the hidden .chatter.json config file."""
-    return get_home_directory() / CHATTER_CONFIG_FILE
+def get_chattr_config_path() -> Path:
+    """Get the path to the hidden .chattr.json config file."""
+    return get_home_directory() / CHATTR_CONFIG_FILE
 
 
-def load_chatter_config() -> Optional[Dict]:
+def load_chattr_config() -> Optional[Dict]:
     """
-    Load the .chatter.json configuration file from user's home directory.
+    Load the .chattr.json configuration file from user's home directory.
     
     Returns:
         Dict with config data if file exists, None otherwise
     """
-    config_path = get_chatter_config_path()
+    config_path = get_chattr_config_path()
     
     if not config_path.exists():
         return None
@@ -66,21 +66,21 @@ def load_chatter_config() -> Optional[Dict]:
         return None
 
 
-def save_chatter_config(chatter_root: str) -> bool:
+def save_chattr_config(chattr_root: str) -> bool:
     """
-    Save the .chatter.json configuration file to user's home directory.
+    Save the .chattr.json configuration file to user's home directory.
     
     Args:
-        chatter_root: Path to the Chatter root directory
+        chattr_root: Path to the Chattr root directory
         
     Returns:
         True if successful, False otherwise
     """
-    config_path = get_chatter_config_path()
+    config_path = get_chattr_config_path()
     
     config_data = {
-        "chatter_root": chatter_root,
-        "version": CHATTER_VERSION,
+        "chattr_root": chattr_root,
+        "version": CHATTR_VERSION,
         "last_updated": datetime.now().isoformat()
     }
     
@@ -95,21 +95,21 @@ def save_chatter_config(chatter_root: str) -> bool:
 
 def prompt_user_for_location() -> str:
     """
-    Prompt the user for the Chatter root directory location.
+    Prompt the user for the Chattr root directory location.
     
     Returns:
-        Expanded path to the Chatter root directory
+        Expanded path to the Chattr root directory
     """
-    default_path = os.path.expanduser(DEFAULT_CHATTER_ROOT)
+    default_path = os.path.expanduser(DEFAULT_CHATTR_ROOT)
     
     print("\n" + "="*70)
-    print("🚀 Welcome to Chatter - Your Message Archive Swiss Army Knife")
+    print("🚀 Welcome to Chattr - Your Message Archive Swiss Army Knife")
     print("="*70)
-    print("\nFirst-time setup: Please specify where to store Chatter data.")
+    print("\nFirst-time setup: Please specify where to store Chattr data.")
     print(f"\nDefault location: {default_path}")
     print("Press Enter to use default, or type a custom path:")
     
-    user_input = input("\n📁 Chatter root directory: ").strip()
+    user_input = input("\n📁 Chattr root directory: ").strip()
     
     if not user_input:
         return default_path
@@ -117,24 +117,24 @@ def prompt_user_for_location() -> str:
     return os.path.expanduser(user_input)
 
 
-def create_directory_structure(chatter_root: str) -> bool:
+def create_directory_structure(chattr_root: str) -> bool:
     """
-    Create the Chatter directory structure.
+    Create the Chattr directory structure.
     
     Args:
-        chatter_root: Path to the Chatter root directory
+        chattr_root: Path to the Chattr root directory
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        root_path = Path(chatter_root)
+        root_path = Path(chattr_root)
         
         # Create root directory
         root_path.mkdir(parents=True, exist_ok=True)
         
         # Create subdirectories
-        for main_dir, subdirs in CHATTER_STRUCTURE.items():
+        for main_dir, subdirs in CHATTR_STRUCTURE.items():
             main_path = root_path / main_dir
             main_path.mkdir(exist_ok=True)
             
@@ -148,12 +148,12 @@ def create_directory_structure(chatter_root: str) -> bool:
         return False
 
 
-def copy_default_configs(chatter_root: str) -> bool:
+def copy_default_configs(chattr_root: str) -> bool:
     """
-    Copy default configuration files from Defaults/ to user's Chatter directory.
+    Copy default configuration files from Defaults/ to user's Chattr directory.
     
     Args:
-        chatter_root: Path to the Chatter root directory
+        chattr_root: Path to the Chattr root directory
         
     Returns:
         True if successful, False otherwise
@@ -166,20 +166,20 @@ def copy_default_configs(chatter_root: str) -> bool:
             print(f"❌ Error: Defaults directory not found at {defaults_dir}")
             return False
         
-        chatter_path = Path(chatter_root)
+        chattr_path = Path(chattr_root)
         
         # Copy main config.json
         config_source = defaults_dir / "config.json"
-        config_dest = chatter_path / "config.json"
+        config_dest = chattr_path / "config.json"
         
         if config_source.exists():
-            # Read the config and replace {CHATTER_ROOT} placeholder
+            # Read the config and replace {CHATTR_ROOT} placeholder
             with open(config_source, 'r') as f:
                 config_data = json.load(f)
             
             # Replace placeholders with actual path
             config_str = json.dumps(config_data, indent=2)
-            config_str = config_str.replace("{CHATTER_ROOT}", chatter_root)
+            config_str = config_str.replace("{CHATTR_ROOT}", chattr_root)
             config_data = json.loads(config_str)
             
             # Write to destination
@@ -188,7 +188,7 @@ def copy_default_configs(chatter_root: str) -> bool:
         
         # Copy service configs
         services_source = defaults_dir / "Services"
-        services_dest = chatter_path / "Services"
+        services_dest = chattr_path / "Services"
         
         if services_source.exists():
             for service_file in services_source.glob("*.json"):
@@ -201,21 +201,21 @@ def copy_default_configs(chatter_root: str) -> bool:
         return False
 
 
-def verify_chatter_structure(chatter_root: str) -> Tuple[bool, list]:
+def verify_chattr_structure(chattr_root: str) -> Tuple[bool, list]:
     """
-    Verify that the Chatter directory structure is complete.
+    Verify that the Chattr directory structure is complete.
     
     Args:
-        chatter_root: Path to the Chatter root directory
+        chattr_root: Path to the Chattr root directory
         
     Returns:
         Tuple of (is_valid, missing_items)
     """
     missing = []
-    root_path = Path(chatter_root)
+    root_path = Path(chattr_root)
     
     # Check main directories
-    for main_dir in CHATTER_STRUCTURE.keys():
+    for main_dir in CHATTR_STRUCTURE.keys():
         dir_path = root_path / main_dir
         if not dir_path.exists():
             missing.append(str(dir_path))
@@ -241,55 +241,55 @@ def run_preflight() -> Optional[str]:
     Main preflight function - checks for existing config or sets up new installation.
     
     Returns:
-        Path to Chatter root directory if successful, None otherwise
+        Path to Chattr root directory if successful, None otherwise
     """
     # Check for existing config
-    existing_config = load_chatter_config()
+    existing_config = load_chattr_config()
     
     if existing_config:
-        chatter_root = existing_config.get("chatter_root")
+        chattr_root = existing_config.get("chattr_root")
         
-        if chatter_root:
+        if chattr_root:
             # Verify the structure is intact
-            is_valid, missing = verify_chatter_structure(chatter_root)
+            is_valid, missing = verify_chattr_structure(chattr_root)
             
             if is_valid:
                 # Silent success - structure exists and is valid
-                return chatter_root
+                return chattr_root
             else:
-                print(f"\n⚠️  Warning: Chatter structure at {chatter_root} is incomplete.")
+                print(f"\n⚠️  Warning: Chattr structure at {chattr_root} is incomplete.")
                 print(f"Missing items: {len(missing)}")
                 
                 response = input("\nWould you like to repair the structure? (y/n): ").strip().lower()
                 
                 if response == 'y':
-                    if create_directory_structure(chatter_root):
-                        if copy_default_configs(chatter_root):
-                            print(f"\n✅ Chatter structure repaired at: {chatter_root}")
-                            return chatter_root
+                    if create_directory_structure(chattr_root):
+                        if copy_default_configs(chattr_root):
+                            print(f"\n✅ Chattr structure repaired at: {chattr_root}")
+                            return chattr_root
                 
                 # If repair failed or declined, fall through to new setup
     
     # No existing config or repair failed - run first-time setup
-    chatter_root = prompt_user_for_location()
+    chattr_root = prompt_user_for_location()
     
-    print(f"\n📦 Creating Chatter structure at: {chatter_root}")
+    print(f"\n📦 Creating Chattr structure at: {chattr_root}")
     
     # Create directory structure
-    if not create_directory_structure(chatter_root):
+    if not create_directory_structure(chattr_root):
         return None
     
     # Copy default configs
-    if not copy_default_configs(chatter_root):
+    if not copy_default_configs(chattr_root):
         return None
     
     # Save config to home directory
-    if not save_chatter_config(chatter_root):
+    if not save_chattr_config(chattr_root):
         return None
     
-    print(f"\n✅ Chatter initialized successfully!")
-    print(f"📁 Data directory: {chatter_root}")
-    print(f"⚙️  Configuration: {get_chatter_config_path()}")
+    print(f"\n✅ Chattr initialized successfully!")
+    print(f"📁 Data directory: {chattr_root}")
+    print(f"⚙️  Configuration: {get_chattr_config_path()}")
     
-    return chatter_root
+    return chattr_root
 
