@@ -24,6 +24,7 @@ from chattr.config import Settings
 from chattr.database_manager import DatabaseManager, ImportCounts
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
+from chattr.media_archive import archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
 from chattr.parsers.imessage_parser import IMessageParser
@@ -88,6 +89,19 @@ def _apply_aliases(messages: list[dict[str, Any]], aliases: Optional[PathLike]) 
             message["author"] = mapping[author]
 
 
+def _archive_media(messages: list[dict[str, Any]], destination: PathLike, service: str) -> None:
+    """Copy each message's media into the archive; record where it went on the message."""
+    archived = archive_media(
+        [(m["attachment_path"], m["timestamp"]) for m in messages if m.get("attachment_path")],
+        destination,
+        service,
+    )
+    for message in messages:
+        info = archived.get(message.get("attachment_path", ""))
+        if info and info.archival_path:
+            message["archival_path"] = info.archival_path
+
+
 def _write_conversation_html(
     db: DatabaseManager, conversation_id: str, name: str, folder: Path, owner: Optional[str]
 ) -> Optional[Path]:
@@ -108,8 +122,13 @@ def convert(
     html: bool = False,
     owner: Optional[str] = None,
     aliases: Optional[PathLike] = None,
+    attachments_dir: Optional[PathLike] = None,
 ) -> ConvertResult:
-    """Convert one WhatsApp or Messenger export along the chosen route."""
+    """Convert one WhatsApp or Messenger export along the chosen route.
+
+    With `attachments_dir`, WhatsApp media is also copied into that folder, renamed and dated by
+    the message time (originals stay where they are).
+    """
     key = service.lower()
     if key not in SERVICES:
         raise CommandError(f"Unknown service '{service}'. Choose one of: {', '.join(SERVICES)}.")
@@ -123,6 +142,10 @@ def convert(
     if not messages:
         raise CommandError(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
+    if attachments_dir:
+        if key != "whatsapp":
+            raise CommandError(f"Archiving media isn't supported for {name} yet.")
+        _archive_media(messages, attachments_dir, name)
     conversation = conversation_for(name, export)
     if len({m["author"] for m in messages if m.get("author")}) > 2:
         conversation = replace(conversation, type="group")  # more than two people are talking

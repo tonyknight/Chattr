@@ -161,3 +161,16 @@ def test_a_utf8_bom_and_blank_lines_are_harmless(tmp_path: Path) -> None:
 
 def test_a_missing_file_gives_no_messages(tmp_path: Path) -> None:
     assert WhatsAppParser().parse(str(tmp_path / "nothing.txt")) == []
+
+
+def test_any_line_without_a_sender_is_a_system_notice(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        '15/04/2024, 10:00 - Rui created group "Reunion"',
+        "15/04/2024, 10:01 - Rui added Maria",
+        "15/04/2024, 10:02 - Rui: hello",
+    )
+    created, added, hello = WhatsAppParser().parse(path)
+    assert (created["type"], created["author"]) == ("system", None)
+    assert (added["type"], added["author"]) == ("system", None)
+    assert hello["type"] == "text"

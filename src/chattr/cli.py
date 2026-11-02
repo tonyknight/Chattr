@@ -37,7 +37,6 @@ IMESSAGE_ONLY = (
     "chat",
     "limit",
     "verbose",
-    "attachments_dir",
 )
 #: Options that only make sense when iMessage goes into the central archive.
 CENTRAL_ONLY_FOR_IMESSAGE = ("html", "aliases", "owner")
@@ -76,14 +75,16 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--html", action="store_true", help="also write an HTML page")
     convert.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
     convert.add_argument("--aliases", help="JSON file of {identifier or name: person name}")
+    convert.add_argument(
+        "--attachments-dir",
+        help="also copy media into this archive folder, renamed and dated "
+        "(WhatsApp; iMessage with --json)",
+    )
     imessage = convert.add_argument_group("iMessage options")
     imessage.add_argument("--contacts", help="VCF contacts file used to name senders")
     imessage.add_argument("--region", help="phone number region for contacts (default: US)")
     imessage.add_argument("--attachment-root", help="folder holding the original attachments")
     imessage.add_argument("--batch-size", type=int, help="messages per batch")
-    imessage.add_argument(
-        "--attachments-dir", help="also copy attachments into this archive folder"
-    )
     imessage.add_argument("--attachment-workers", type=int, help="parallel attachment workers")
     imessage.add_argument("--workers", type=int, help="parallel message workers")
     imessage.add_argument("--spam-mode", choices=commands.SPAM_MODES, help="spam filtering")
@@ -138,6 +139,8 @@ def _check_convert_options(parser: argparse.ArgumentParser, args: argparse.Names
     wrong = [flag(n) for n in IMESSAGE_ONLY if given(n)]
     if wrong:
         parser.error(f"{', '.join(wrong)} applies to iMessage only.")
+    if args.attachments_dir and args.service != "whatsapp":
+        parser.error(f"--attachments-dir isn't supported for {args.service} yet.")
     if not args.export:
         parser.error(f"convert {args.service}: give the export file to convert.")
 
@@ -202,6 +205,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
         html=args.html,
         owner=args.owner,
         aliases=args.aliases,
+        attachments_dir=args.attachments_dir,
     )
     _print_convert_result(settings, result, route)
     return 0

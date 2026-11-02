@@ -163,7 +163,8 @@ class WhatsAppParser(BaseParser):
         rest: str = raw["rest"]
         author: Optional[str]
         author, separator, body = rest.partition(": ")
-        if not separator:  # a notice with no sender (Android)
+        system = not separator  # a notice with no sender: "Rui added Maria" (Android)
+        if system:
             author, body = None, rest
         body = body.lstrip(MARKS + " ").rstrip()
         message: dict[str, Any] = {
@@ -173,6 +174,9 @@ class WhatsAppParser(BaseParser):
             "message": body,
             "type": "text",
         }
+        if system:
+            message["type"] = "system"
+            return message
         first_line = body.split("\n", 1)[0]
         attached = _ATTACHED_IOS.match(first_line) or _ATTACHED_ANDROID.match(first_line)
         omitted = _OMITTED.match(body)

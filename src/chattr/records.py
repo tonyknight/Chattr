@@ -141,7 +141,11 @@ def _attachment_from_parser(message: dict[str, Any]) -> tuple[AttachmentRecord, 
     mime = mimetypes.guess_type(name)[0]
     if path and Path(path).is_file():
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return (AttachmentRecord(digest, name, mime, Path(path).stat().st_size),)
+        return (
+            AttachmentRecord(
+                digest, name, mime, Path(path).stat().st_size, message.get("archival_path")
+            ),
+        )
     # The export names a file that wasn't included: identify it by name instead.
     return (AttachmentRecord(_digest("attachment", name), name, mime, None),)
 
