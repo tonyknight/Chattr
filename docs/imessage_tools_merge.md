@@ -1,3 +1,5 @@
+> **Superseded.** This document describes an earlier stage of Chattr (when it was named Chat2HTML or Chatter). For the current design, see the [README](../README.md) and Caixa's `docs/ai/Istanbul/Phase1-Collector/` requirements. Kept for history.
+
 # iMessage Tools Merge Documentation
 
 ## Overview

@@ -1,59 +1,27 @@
-# Chat2HTML - Unified Chat Archive Conversion Framework
-# Requirements file for all dependencies across all supported services
+# Chattr - message archive converter
+# Runtime dependencies (kept in step with pyproject.toml).
+# Installing the package (`pip install .`) installs these automatically.
 
-# Core dependencies (built into Python - no installation needed)
-# sqlite3 - built-in
-# datetime - built-in
-# json - built-in
-# os - built-in
-# argparse - built-in
-# pathlib - built-in
-# dataclasses - built-in (Python 3.7+)
-# typing - built-in
-# shutil - built-in
-# re - built-in
-
-# HTML Template Engine
-# Used for generating rich, interactive HTML archives from message data
+# HTML template engine: renders the HTML archives
 jinja2>=3.0.0
 
-# Language Detection
-# Used for automatic translation features and language-aware processing
-
-# HTTP Requests
-# Used for API calls (OpenRouter AI translation, etc.)
-
-# Contact Management Dependencies
-# These enable VCF (vCard) file parsing and phone number normalization
-# Used primarily for iMessage contact name resolution
+# Contacts: vCard parsing and phone number normalization (iMessage contact names)
 vobject>=0.9.6.1
 phonenumbers>=8.13.0
 
-# HTML Parsing
-# Used for parsing Facebook Messenger and legacy iMessage HTML exports
-
-# Performance and UI Dependencies
-# These enable parallel processing and progress indicators
+# Progress bars for long imports
 tqdm>=4.64.0
 
-# Configuration Management
-# Used for loading API keys and configuration from environment files
+# Loads API keys from an environment file (optional translation backends)
 python-dotenv>=0.19.0
 
-# Attachment Processing Dependencies
-# These enable image conversion, audio conversion, and metadata handling
-# Used primarily for iMessage attachment processing
+# Attachment processing: image conversion (including HEIC), audio/video conversion
 Pillow>=9.0.0
 pillow-heif>=0.10.0
 ffmpeg-python>=0.2.0
 
-# External System Dependencies (must be installed separately)
-# FFmpeg - Audio/video conversion (system install required)
-# ExifTool - EXIF metadata handling (system install required)
-# Note: These are not Python packages and must be installed via system package manager
+# External system tools (install with your system package manager):
+#   FFmpeg   - audio/video conversion
+#   ExifTool - reading and writing image metadata
 
-# Development Dependencies (optional)
-# Uncomment if you want to contribute to development
-# pytest>=7.0.0
-# black>=22.0.0
-# mypy>=1.0.0
+# Development: pip install -e ".[dev]"  (pytest, black, mypy)
