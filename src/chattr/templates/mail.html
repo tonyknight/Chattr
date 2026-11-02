@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<header>
+<p class="back"><a href="{{ back }}">&larr; All pages</a></p>
+<h1>{{ title }}</h1>
+</header>
+<main>
+{% for e in mails %}<article class="entry {{ e.direction }} k-email" id="m-{{ e.id }}">
+<div class="meta"><span class="badge s-mail">Mail</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.date }} {{ e.time }}</time> <span class="offset">{{ e.offset }}</span></div>
+<div class="mail-headers">
+<div><b>From:</b> {{ e.from_line }}</div>
+{% if e.to %}<div><b>To:</b> {{ e.to }}</div>{% endif %}
+{% if e.cc %}<div><b>Cc:</b> {{ e.cc }}</div>{% endif %}
+<div><b>Subject:</b> {{ e.subject }}</div>
+{% if e.labels %}<div><b>Labels:</b> {{ e.labels }}</div>{% endif %}
+</div>
+<div class="body">{{ e.body | nl2br }}</div>
+{% if e.has_html %}<div class="note">An HTML version of this mail is kept in the page's data, not shown here.</div>{% endif %}
+{% for a in e.attachments %}<div class="attachment">{% if a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>
+{% endfor %}</article>
+{% endfor %}
+</main>
+{% endblock %}
+{% block island %}<script type="application/json" id="chattr-data">{{ island | safe }}</script>{% endblock %}

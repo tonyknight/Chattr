@@ -255,19 +255,104 @@ def _message_page(site: _Site, spec: PageSpec) -> str:
     )
 
 
+def _people_line(people: Iterable[dict[str, str]]) -> str:
+    return ", ".join(
+        f"{p['name']} <{p['address']}>" if p.get("name") else p["address"] for p in people
+    )
+
+
+def _mail_page(site: _Site, spec: PageSpec) -> str:
+    renderer = site.renderer
+    page_dir = site.out_root / spec.folder
+    mails = []
+    for message_id in spec.message_ids:
+        message = renderer.messages[message_id]
+        headers = json.loads(message["mail_headers"]) if message["mail_headers"] else {}
+        specific = json.loads(message["service_specific"]) if message["service_specific"] else {}
+        handle = renderer.handles.get(message["sender_handle_id"] or 0)
+        address = handle["identifier"] if handle else ""
+        name = site.label(message["sender_handle_id"]) if handle else "unknown sender"
+        local: datetime = message["local"]
+        mails.append(
+            {
+                "id": message["id"],
+                "direction": "sent" if message["is_from_owner"] else "received",
+                "author": name,
+                "iso": message["timestamp_utc"],
+                "date": f"{local:%Y-%m-%d}",
+                "time": _time_text(message),
+                "offset": _offset_text(message),
+                "from_line": f"{name} <{address}>" if address and address != name else name,
+                "to": _people_line(headers.get("to", [])),
+                "cc": _people_line(headers.get("cc", [])),
+                "subject": headers.get("subject") or "(no subject)",
+                "labels": ", ".join(headers.get("labels", [])),
+                "body": message["body"] or "",
+                "has_html": bool(specific.get("body_html")),
+                "attachments": [
+                    {
+                        "name": a["original_filename"] or "attachment",
+                        "href": site.href(a["storage_path"], page_dir),
+                    }
+                    for a in renderer.attachments.get(message["id"], [])
+                ],
+            }
+        )
+    depth = spec.folder.count("/") + 1
+    return site.env.get_template("mail.html").render(
+        title=spec.title,
+        mails=mails,
+        back="../" * depth + "index.html",
+        island=Markup(island_json(renderer.document(spec))),
+    )
+
+
+def _index(site: _Site) -> str:
+    """The index: every person, group and mail thread, each linking to its pages."""
+    renderer = site.renderer
+    sections: dict[str, dict[str, Any]] = {
+        "person": {"name": "People", "by_folder": {}},
+        "group": {"name": "Groups", "by_folder": {}},
+        "mail": {"name": "Mail", "entries": []},
+    }
+    for page in renderer.pages:
+        count = len(page.message_ids)
+        link = {"href": quote(page.path, safe="/()"), "year": page.year, "count": count}
+        if page.kind == "mail":
+            sections["mail"]["entries"].append(
+                {"title": page.filename.removesuffix(".html"), "href": link["href"], "count": count}
+            )
+        else:
+            entry = sections[page.kind]["by_folder"].setdefault(
+                page.folder, {"title": page.title, "links": []}
+            )
+            entry["links"].append(link)
+    ordered = []
+    for kind in ("person", "group"):
+        items = sorted(sections[kind]["by_folder"].values(), key=lambda i: i["title"].casefold())
+        if items:
+            ordered.append({"name": sections[kind]["name"], "entries": items})
+    if sections["mail"]["entries"]:
+        ordered.append({"name": "Mail", "entries": sections["mail"]["entries"]})
+    return site.env.get_template("index.html").render(sections=ordered)
+
+
 def render_pages(
     renderer: Renderer,
     out_root: PathLike,
     attachment_roots: Sequence[PathLike] = (),
 ) -> list[Path]:
-    """Write every person and group page under `out_root`; returns the files written."""
+    """Write every page and the index under `out_root`; returns the files written."""
     site = _Site(renderer, Path(out_root), attachment_roots)
     written = []
     for spec in renderer.pages:
-        if spec.kind not in ("person", "group"):
-            continue
         path = site.out_root / spec.path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_message_page(site, spec), encoding="utf-8")
+        text = _mail_page(site, spec) if spec.kind == "mail" else _message_page(site, spec)
+        path.write_text(text, encoding="utf-8")
         written.append(path)
+    index = site.out_root / "index.html"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.write_text(_index(site), encoding="utf-8")
+    written.append(index)
     return written

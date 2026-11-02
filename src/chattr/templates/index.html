@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Chattr archive{% endblock %}
+{% block content %}
+<header><h1>Chattr archive</h1></header>
+<main class="index">
+{% for section in sections %}<h2>{{ section.name }}</h2>
+<ul>
+{% for item in section.entries %}<li>{% if item.links is defined %}{{ item.title }}: {% for link in item.links %}<a href="{{ link.href }}">{{ link.year }}</a> <span class="count">({{ link.count }})</span> {% endfor %}{% else %}<a href="{{ item.href }}">{{ item.title }}</a> <span class="count">({{ item.count }} message{{ "" if item.count == 1 else "s" }})</span>{% endif %}</li>
+{% endfor %}</ul>
+{% endfor %}
+</main>
+{% endblock %}
