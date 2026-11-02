@@ -6,6 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fixtures import FamilyExports, family
 
 from chattr import commands
@@ -93,3 +94,19 @@ def test_aliases_rename_senders(
     assert result.json_path is not None
     senders = {m["sender"] for m in json.loads(result.json_path.read_text())["messages"]}
     assert "Ana (daughter)" in senders and family.ANA.name not in senders
+
+
+def test_an_unreadable_aliases_file_is_a_command_error(
+    chattr_root: Path, fixture_family: FamilyExports, tmp_path: Path
+) -> None:
+    aliases = tmp_path / "aliases.json"
+    aliases.write_text("{not json")
+    settings = Settings.load(chattr_root)
+    with pytest.raises(commands.CommandError, match="aliases"):
+        commands.convert(
+            settings, "whatsapp", _whatsapp(fixture_family), route="service", aliases=aliases
+        )
+    with pytest.raises(commands.CommandError, match="aliases"):
+        commands.convert(
+            settings, "whatsapp", _whatsapp(fixture_family), aliases=tmp_path / "missing.json"
+        )

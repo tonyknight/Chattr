@@ -187,3 +187,16 @@ def test_the_old_processing_paths_are_gone() -> None:
         "generate_html_submenu",
     ):
         assert not hasattr(cli, name), name
+
+
+def test_a_bad_database_in_the_tools_is_reported_and_the_menu_continues(
+    chattr_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    not_a_db = tmp_path / "chat.db"
+    not_a_db.write_text("this is not SQLite")
+    assert _menu(chattr_root, monkeypatch, ["3", "1", str(not_a_db), "5", EXIT]) == 0
+    out = capsys.readouterr().out
+    assert "❌" in out and "Goodbye." in out

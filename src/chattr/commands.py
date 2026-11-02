@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -79,7 +80,10 @@ def _apply_aliases(messages: list[dict[str, Any]], aliases: Optional[PathLike]) 
     """Rename senders using a JSON file of {identifier or name: person name}."""
     if not aliases:
         return
-    mapping = json.loads(Path(aliases).read_text(encoding="utf-8"))
+    try:
+        mapping = json.loads(Path(aliases).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CommandError(f"Can't read the aliases file {aliases}: {error}") from error
     if not isinstance(mapping, dict):
         raise CommandError(f"The aliases file must contain a JSON object: {aliases}")
     for message in messages:
@@ -192,14 +196,19 @@ def _open_imessage(
     db_path = Path(db_path).expanduser()
     if not db_path.is_file():
         raise CommandError(f"iMessage database not found: {db_path}")
-    return iMessageDatabaseParser(
-        db_path=str(db_path),
-        vcf_path=str(Path(contacts).expanduser()) if contacts else None,
-        region=region,
-        attachment_root=str(Path(attachment_root).expanduser()) if attachment_root else None,
-        enable_spam_filtering=spam_mode != "disabled",
-        aggressive_spam_filtering=spam_mode == "aggressive",
-    )
+    try:
+        return iMessageDatabaseParser(
+            db_path=str(db_path),
+            vcf_path=str(Path(contacts).expanduser()) if contacts else None,
+            region=region,
+            attachment_root=str(Path(attachment_root).expanduser()) if attachment_root else None,
+            enable_spam_filtering=spam_mode != "disabled",
+            aggressive_spam_filtering=spam_mode == "aggressive",
+        )
+    except PermissionError as error:  # the parser's message explains macOS Full Disk Access
+        raise CommandError(str(error)) from error
+    except sqlite3.DatabaseError as error:
+        raise CommandError(f"Can't read the iMessage database {db_path}: {error}") from error
 
 
 def convert_imessage(

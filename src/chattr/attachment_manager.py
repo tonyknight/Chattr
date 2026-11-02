@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import tempfile
+import threading
 
 try:
     from PIL import Image, ExifTags
@@ -445,6 +446,10 @@ class AttachmentManager:
         self.hash_to_path: Dict[str, str] = {}
         self.processed_hashes: Dict[str, AttachmentInfo] = {}
 
+        # Archival paths already given out in this run (workers run in parallel)
+        self._claimed_paths: set = set()
+        self._claim_lock = threading.Lock()
+
         # Statistics
         self.stats = ProcessingStats()
 
@@ -455,6 +460,22 @@ class AttachmentManager:
         print(f"Base directory: {base_attachments_dir}")
         print(f"Mode: {'MOVE' if move_files else 'COPY'} files")
         print(f"Workers: {max_workers}")
+
+    def _claim_path(self, path: str) -> str:
+        """Reserve `path` for this run, numbering it (" 2", " 3", …) if already taken.
+
+        Only names given out in this run count, so re-running into the same folder overwrites
+        its own earlier output instead of piling up copies. Full collision-free naming for
+        every service is ticket 13 (one attachment pipeline).
+        """
+        base, extension = os.path.splitext(path)
+        with self._claim_lock:
+            candidate, number = path, 1
+            while candidate in self._claimed_paths:
+                number += 1
+                candidate = f"{base} {number}{extension}"
+            self._claimed_paths.add(candidate)
+        return candidate
 
     def process_single_attachment(
         self, attachment: AttachmentInfo, message_date: datetime
@@ -505,6 +526,9 @@ class AttachmentManager:
             folder_path, full_archival_path = self.processor.generate_archival_path(
                 attachment, target_date, str(self.base_attachments_dir)
             )
+
+            # Two different files can share a timestamp; never let one overwrite the other.
+            full_archival_path = self._claim_path(full_archival_path)
 
             # Step 6: Create target directory
             os.makedirs(folder_path, exist_ok=True)
@@ -716,6 +740,10 @@ class AttachmentManager:
             print(f"Throughput: {throughput:.1f} attachments/second")
 
 
+#: How iMessage's chat.db records the location of an attachment file.
+IMESSAGE_ATTACHMENTS_PREFIX = "~/Library/Messages/Attachments/"
+
+
 def create_attachment_info_from_message_attachment(
     attachment_dict: Dict[str, Any], source_attachments_dir: str
 ) -> Optional[AttachmentInfo]:
@@ -737,8 +765,12 @@ def create_attachment_info_from_message_attachment(
         if not filename:
             return None
 
-        # Handle tilde expansion for iMessage paths
-        if filename.startswith("~/"):
+        # iMessage records attachments as "~/Library/Messages/Attachments/…": re-root those under
+        # the given source folder, so a chat.db copied from another Mac finds its attachments.
+        if filename.startswith(IMESSAGE_ATTACHMENTS_PREFIX):
+            relative = filename[len(IMESSAGE_ATTACHMENTS_PREFIX) :]
+            original_path = os.path.join(os.path.expanduser(source_attachments_dir), relative)
+        elif filename.startswith("~/"):
             original_path = os.path.expanduser(filename)
         else:
             original_path = os.path.join(source_attachments_dir, filename)

@@ -100,8 +100,11 @@ def test_convert_imessage_with_the_restored_flags(
         "--spam-mode",
         "disabled",
         "--verbose",
+        "--attachments-dir",
+        str(chattr_root / "Archived attachments"),
     )
     assert code == 0
+    assert [p for p in (chattr_root / "Archived attachments").rglob("*") if p.is_file()]
     export = chattr_root / "Output" / "iMessage" / "imessage_export.json"
     assert json.loads(export.read_text(encoding="utf-8"))
     assert "11 messages" in capsys.readouterr().out

@@ -37,6 +37,7 @@ IMESSAGE_ONLY = (
     "chat",
     "limit",
     "verbose",
+    "attachments_dir",
 )
 NOT_FOR_IMESSAGE = ("route", "html", "aliases", "owner")
 
@@ -79,6 +80,9 @@ def build_parser() -> argparse.ArgumentParser:
     imessage.add_argument("--region", help="phone number region for contacts (default: US)")
     imessage.add_argument("--attachment-root", help="folder holding the original attachments")
     imessage.add_argument("--batch-size", type=int, help="messages per batch")
+    imessage.add_argument(
+        "--attachments-dir", help="also copy attachments into this archive folder"
+    )
     imessage.add_argument("--attachment-workers", type=int, help="parallel attachment workers")
     imessage.add_argument("--workers", type=int, help="parallel message workers")
     imessage.add_argument("--spam-mode", choices=commands.SPAM_MODES, help="spam filtering")
@@ -170,6 +174,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
             chat=args.chat,
             limit=args.limit,
             verbose=args.verbose,
+            attachments_dir=args.attachments_dir,
         )
         _print_imessage_result(result)
         return 0
