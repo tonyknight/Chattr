@@ -150,8 +150,8 @@ def test_imessage_flags_are_rejected_for_mail(
                 "convert",
                 "mail",
                 str(fixture_family.paths["mbox"]),
-                "--region",
-                "US",
+                "--workers",
+                "2",
             ]
         )
     assert "iMessage only" in capsys.readouterr().err

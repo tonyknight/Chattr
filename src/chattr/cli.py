@@ -4,6 +4,7 @@ Both call the same functions in `chattr.commands`, so anything the menu does can
 
     chattr-cli [--root DIR] convert <service> [export] [--db | --json] [--html] ...
     chattr-cli [--root DIR] html [--out FILE] [--owner NAME]
+    chattr-cli [--root DIR] people [--contacts F] [--aliases F] [--owner NAME] [--json]
     chattr-cli [--root DIR] chats [chat.db]
     chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
 
@@ -11,6 +12,8 @@ With no command, the menu runs.
 """
 
 import argparse
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -28,8 +31,6 @@ def database_path(settings: Settings) -> Path:
 
 
 IMESSAGE_ONLY = (
-    "contacts",
-    "region",
     "attachment_root",
     "batch_size",
     "attachment_workers",
@@ -91,14 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--html", action="store_true", help="also write an HTML page")
     convert.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
     convert.add_argument("--aliases", help="JSON file of {identifier or name: person name}")
+    convert.add_argument("--contacts", help="vCard file that names the people behind phone numbers")
+    convert.add_argument("--region", help="phone number region for contacts (default: US)")
     convert.add_argument(
         "--attachments-dir",
         help="also copy media into this archive folder, renamed and dated "
         "(iMessage: with --json)",
     )
     imessage = convert.add_argument_group("iMessage options")
-    imessage.add_argument("--contacts", help="VCF contacts file used to name senders")
-    imessage.add_argument("--region", help="phone number region for contacts (default: US)")
     imessage.add_argument("--attachment-root", help="folder holding the original attachments")
     imessage.add_argument("--batch-size", type=int, help="messages per batch")
     imessage.add_argument("--attachment-workers", type=int, help="parallel attachment workers")
@@ -119,6 +120,15 @@ def build_parser() -> argparse.ArgumentParser:
     html.add_argument("--out", help="output file (default: Output/Chattr/All_Chats_Archive.html)")
     html.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
 
+    people = sub.add_parser(
+        "people", help="link handles to people (contacts, aliases) and list those still unnamed"
+    )
+    people.add_argument("--contacts", help="vCard file that names the people behind phone numbers")
+    people.add_argument("--aliases", help="JSON file of {identifier or name: person name}")
+    people.add_argument("--owner", help="the archive owner's name")
+    people.add_argument("--region", help="phone number region for contacts (default: US)")
+    people.add_argument("--json", action="store_true", help="print the unresolved handles as JSON")
+
     chats = sub.add_parser("chats", help="list the chats in an iMessage database")
     chats.add_argument("database", nargs="?", help="chat.db (default: configured)")
 
@@ -130,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=commands.DOCTOR_CHECKS,
         help="run only this check (repeatable; default: all)",
     )
-    for command in (convert, html, chats, doctor):
+    for command in (convert, html, people, chats, doctor):
         # `--root` works before or after the command; SUPPRESS keeps an earlier value.
         command.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
@@ -182,6 +192,15 @@ def _print_convert_result(settings: Settings, result: commands.ConvertResult, ro
     )
     if result.html_path:
         print(f"HTML: {result.html_path}")
+    _print_unresolved_note(result)
+
+
+def _print_unresolved_note(result: commands.ConvertResult) -> None:
+    if result.unresolved:
+        print(
+            f"{result.unresolved} {result.service} handle(s) have no person yet: "
+            "run `chattr-cli people` to see them."
+        )
 
 
 def _print_imessage_result(result: commands.ConvertResult) -> None:
@@ -254,6 +273,8 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
         aliases=args.aliases,
         attachments_dir=args.attachments_dir,
         transcriber=transcriber,
+        contacts=args.contacts,
+        region=args.region,
     )
     _print_convert_result(settings, result, route)
     return 0
@@ -265,6 +286,29 @@ def _run_html(settings: Settings, args: argparse.Namespace) -> int:
         print("The central archive is empty: convert an export first.")
         return 1
     print(f"HTML: {path}")
+    return 0
+
+
+def _run_people(settings: Settings, args: argparse.Namespace) -> int:
+    result = commands.people(
+        settings,
+        owner=args.owner,
+        aliases=args.aliases,
+        contacts=args.contacts,
+        region=args.region,
+    )
+    if args.json:
+        print(json.dumps([asdict(u) for u in result.unresolved], indent=2, ensure_ascii=False))
+        return 0
+    if not result.unresolved:
+        print("Every handle in the archive has a person.")
+        return 0
+    print(f"{len(result.unresolved)} handle(s) have no person yet (busiest first):")
+    for u in result.unresolved:
+        span = f"{(u.first_seen or '')[:10]} to {(u.last_seen or '')[:10]}" if u.messages else "-"
+        label = f"{u.identifier} ({u.display_name})" if u.display_name else u.identifier
+        print(f"  {u.service:<12} {label:<40} {u.messages:>5} message(s)  {span}")
+    print("Name them in an aliases file ({identifier: person}) and run again with --aliases.")
     return 0
 
 
@@ -282,6 +326,7 @@ def _run_doctor(settings: Settings, args: argparse.Namespace) -> int:
 SUBCOMMANDS = {
     "convert": _run_convert,
     "html": _run_html,
+    "people": _run_people,
     "chats": _run_chats,
     "doctor": _run_doctor,
 }

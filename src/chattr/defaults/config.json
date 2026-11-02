@@ -13,6 +13,11 @@
       "log_level": "INFO"
     },
 
+    "owner": {
+      "name": "",
+      "identifiers": []
+    },
+
     "contacts": {
       "vcf_file_path": "",
       "phone_region": "US",

@@ -143,8 +143,8 @@ def test_convert_imessage_limit_and_chat(chattr_root: Path, fixture_family: Fami
         ["imessage", "chat.db", "--json", "--owner", "Maria"],
         ["imessage", "chat.db", "--json", "--aliases", "aliases.json"],
         ["imessage", "chat.db", "--attachments-dir", "Archive"],
-        ["whatsapp", "_chat.txt", "--region", "US"],
-        ["whatsapp", "_chat.txt", "--contacts", "people.vcf"],
+        ["whatsapp", "_chat.txt", "--workers", "2"],
+        ["whatsapp", "_chat.txt", "--spam-mode", "disabled"],
         ["whatsapp"],
     ],
 )

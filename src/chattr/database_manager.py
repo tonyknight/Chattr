@@ -369,7 +369,8 @@ class DatabaseManager:
         rows = self._db.execute(
             "SELECT m.id, c.source_id AS conversation, c.type AS conversation_type, "
             "m.timestamp_utc, m.tz_offset_minutes, m.time_precision, m.tz_assumed, "
-            "h.identifier AS sender, h.display_name AS sender_name, m.is_from_owner, "
+            "h.identifier AS sender, h.display_name AS sender_name, h.person AS person, "
+            "m.is_from_owner, "
             "m.content_type, m.body, m.transcript, m.mail_headers, m.service_specific "
             "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
             "LEFT JOIN handles h ON h.id = m.sender_handle_id "

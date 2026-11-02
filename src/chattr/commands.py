@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from chattr.config import Settings
+from chattr.people import Aliases, Contacts, PeopleResolver
 from chattr.records import ConversationRecord
 from chattr.transcription import Transcriber
-from chattr.database_manager import DatabaseManager, ImportCounts
+from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
@@ -89,6 +90,7 @@ class ConvertResult:
     counts: ImportCounts
     json_path: Optional[Path] = None
     html_path: Optional[Path] = None
+    unresolved: int = 0  # handles of this service that no contact or alias could name
 
 
 def central_database(settings: Settings) -> Path:
@@ -100,6 +102,52 @@ def output_folder(settings: Settings, folder: str) -> Path:
     path = Path(settings.root) / "Output" / folder
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def make_resolver(
+    settings: Settings,
+    owner: Optional[str] = None,
+    aliases: Optional[PathLike] = None,
+    contacts: Optional[PathLike] = None,
+    region: Optional[str] = None,
+) -> PeopleResolver:
+    """The people resolver for these inputs, falling back to the settings.
+
+    Contacts and region come from `global.contacts`, the owner from `global.owner`. A file that
+    can't be read is a `CommandError`, so a mistyped path stops the run before anything is imported.
+    """
+    region = region or str(settings.get("global.contacts.phone_region", "US"))
+    contacts_file = contacts or settings.get_expanded_path("global.contacts.vcf_file_path") or None
+    try:
+        return PeopleResolver(
+            contacts=Contacts.from_vcf(contacts_file, region) if contacts_file else None,
+            aliases=Aliases.from_json(aliases, region) if aliases else None,
+            owner_name=owner or settings.get("global.owner.name", "") or None,
+            owner_identifiers=settings.get("global.owner.identifiers", []) or [],
+            region=region,
+        )
+    except (OSError, ValueError) as error:
+        raise CommandError(str(error)) from error
+
+
+def _resolve(db: DatabaseManager, resolver: PeopleResolver, service: str) -> int:
+    """Link this service's handles to people; returns how many are still unnamed."""
+    return len(db.resolve_people(resolver, service=service).unresolved)
+
+
+def people(
+    settings: Settings,
+    owner: Optional[str] = None,
+    aliases: Optional[PathLike] = None,
+    contacts: Optional[PathLike] = None,
+    region: Optional[str] = None,
+) -> PeopleResult:
+    """Resolve every handle in the central archive with these inputs; report what's unnamed."""
+    resolver = make_resolver(settings, owner, aliases, contacts, region)
+    if not central_database(settings).exists():
+        return PeopleResult()
+    with DatabaseManager(central_database(settings)) as db:
+        return db.resolve_people(resolver)
 
 
 def _apply_aliases(messages: list[dict[str, Any]], aliases: Optional[PathLike]) -> None:
@@ -166,7 +214,8 @@ def _convert_batches(
     owner: Optional[str],
     aliases: Optional[PathLike],
     attachments_dir: Optional[PathLike],
-    transcriber: Optional[Transcriber] = None,
+    transcriber: Optional[Transcriber],
+    resolver: PeopleResolver,
 ) -> ConvertResult:
     """Import a service whose parser returns one batch per conversation (mail, Google Voice,
     voicemail).
@@ -194,18 +243,22 @@ def _convert_batches(
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
             counts = import_conversations(db, settings, name, export, batches)
+            unresolved = _resolve(db, resolver, name)
             html_path = (
                 _write_batch_pages(db, batches, output_folder(settings, "Chattr"), owner)
                 if html
                 else None
             )
-        return ConvertResult(name, counts, html_path=html_path)
+        return ConvertResult(name, counts, html_path=html_path, unresolved=unresolved)
     with DatabaseManager(":memory:") as db:
         counts = import_conversations(db, None, name, export, batches)
+        unresolved = _resolve(db, resolver, name)
         json_path = folder / f"{export.stem if export.is_file() else OUTPUT_FOLDERS[key]}.json"
         db.export_json(name, json_path)
         html_path = _write_batch_pages(db, batches, folder, owner) if html else None
-    return ConvertResult(name, counts, json_path=json_path, html_path=html_path)
+    return ConvertResult(
+        name, counts, json_path=json_path, html_path=html_path, unresolved=unresolved
+    )
 
 
 def _media_files(message: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
@@ -272,8 +325,13 @@ def convert(
     aliases: Optional[PathLike] = None,
     attachments_dir: Optional[PathLike] = None,
     transcriber: Optional[Transcriber] = None,
+    contacts: Optional[PathLike] = None,
+    region: Optional[str] = None,
 ) -> ConvertResult:
     """Convert one export along the chosen route.
+
+    Afterwards the service's handles are linked to people (`contacts`: a vCard file, `aliases`, the
+    owner from `owner` or the settings); `ConvertResult.unresolved` counts those still unnamed.
 
     `transcriber` (voicemail only) turns each voicemail's audio into a transcript locally.
 
@@ -294,9 +352,19 @@ def convert(
     elif not export.is_file():
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
+    resolver = make_resolver(settings, owner, aliases, contacts, region)
     if key in BATCH_SERVICES:
         return _convert_batches(
-            settings, key, export, route, html, owner, aliases, attachments_dir, transcriber
+            settings,
+            key,
+            export,
+            route,
+            html,
+            owner,
+            aliases,
+            attachments_dir,
+            transcriber,
+            resolver,
         )
     parser = parser_class()
     messages = parser.parse(str(export))
@@ -312,6 +380,7 @@ def convert(
             counts = import_messages(
                 db, settings, name, export, messages, owner=owner, conversation=conversation
             )
+            unresolved = _resolve(db, resolver, name)
             html_path = (
                 _write_conversation_html(
                     db,
@@ -323,13 +392,14 @@ def convert(
                 if html
                 else None
             )
-        return ConvertResult(name, counts, html_path=html_path)
+        return ConvertResult(name, counts, html_path=html_path, unresolved=unresolved)
 
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
     with DatabaseManager(":memory:") as db:
         counts = import_messages(
             db, None, name, export, messages, owner=owner, conversation=conversation
         )
+        unresolved = _resolve(db, resolver, name)
         json_path = folder / f"{_file_stem(conversation)}.json"
         db.export_json(name, json_path)
         html_path = (
@@ -337,7 +407,9 @@ def convert(
             if html
             else None
         )
-    return ConvertResult(name, counts, json_path=json_path, html_path=html_path)
+    return ConvertResult(
+        name, counts, json_path=json_path, html_path=html_path, unresolved=unresolved
+    )
 
 
 def generate_html(
@@ -488,6 +560,7 @@ def convert_imessage(
             ),
             html,
             verbose,
+            make_resolver(settings, owner, aliases, contacts, region),
         )
 
     out_path = (
@@ -528,7 +601,12 @@ def convert_imessage(
 
 
 def _import_imessage(
-    settings: Settings, db_path: Path, parser: IMessageParser, html: bool, verbose: bool = False
+    settings: Settings,
+    db_path: Path,
+    parser: IMessageParser,
+    html: bool,
+    verbose: bool,
+    resolver: PeopleResolver,
 ) -> ConvertResult:
     if not db_path.is_file():
         raise CommandError(f"iMessage database not found: {db_path}")
@@ -550,11 +628,12 @@ def _import_imessage(
     html_path = None
     with DatabaseManager(central_database(settings)) as db:
         counts = import_conversations(db, settings, "iMessage", db_path, batches)
+        unresolved = _resolve(db, resolver, "iMessage")
         if html:
             html_path = _write_batch_pages(
                 db, batches, output_folder(settings, "Chattr"), parser.owner
             )
-    return ConvertResult("iMessage", counts, html_path=html_path)
+    return ConvertResult("iMessage", counts, html_path=html_path, unresolved=unresolved)
 
 
 def list_chats(db_path: PathLike) -> list[tuple[int, str]]:
