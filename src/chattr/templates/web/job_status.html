@@ -1,0 +1,12 @@
+<div id="job-status"{% if not job.finished %} hx-get="/jobs/{{ job.number }}/status" hx-trigger="{{ 'load, ' if first else '' }}every 1s" hx-swap="outerHTML"{% endif %}>
+  {% if job.status == "waiting" %}<p class="status">Waiting for the previous conversion to finish…</p>
+  {% elif job.status == "running" %}<p class="status">Working… this can take a while for a large export.</p>
+  {% elif job.status == "done" %}<p class="status done">Done</p>
+  {% else %}<p class="status failed">Something went wrong</p>{% endif %}
+  {% if lines %}<pre class="log">{% for line in lines %}{{ line }}
+{% endfor %}</pre>{% endif %}
+  {% if job.finished %}
+    {% for link in links %}<a class="button" href="{{ link.href }}">{{ link.label }}</a> {% endfor %}
+    <a class="button secondary" href="/">Convert another</a>
+  {% endif %}
+</div>

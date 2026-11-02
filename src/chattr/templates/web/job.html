@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ job.label }} · Chattr{% endblock %}
+{% block content %}
+<p><a href="/">← All sources</a></p>
+<h1>{{ job.label }}</h1>
+{% include "job_status.html" %}
+{% endblock %}

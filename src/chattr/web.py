@@ -22,12 +22,16 @@ websites:
 
 from __future__ import annotations
 
+import contextlib
 import hmac
+import io
 import mimetypes
+import queue
+import re
 import secrets
 import threading
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +40,7 @@ from typing import Any, Optional, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from chattr.commands import OUTPUT_FOLDERS
 from chattr.config import Settings
 
 PACKAGE = Path(__file__).parent
@@ -137,6 +142,156 @@ def _environment() -> Environment:
     )
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+class LogWriter(io.TextIOBase):
+    """Collects what a conversion prints; a progress bar's redraws keep only their last state."""
+
+    def __init__(self) -> None:
+        self._text: list[str] = []
+        self._lock = threading.Lock()
+
+    def writable(self) -> bool:
+        return True
+
+    def isatty(self) -> bool:
+        return False
+
+    def write(self, text: str) -> int:
+        with self._lock:
+            self._text.append(text)
+        return len(text)
+
+    def lines(self, last: int = 40) -> list[str]:
+        with self._lock:
+            whole = "".join(self._text)
+        cleaned = (_ANSI.sub("", line).split("\r")[-1].rstrip() for line in whole.split("\n"))
+        return [line for line in cleaned if line.strip()][-last:]
+
+
+@dataclass
+class Job:
+    number: int
+    label: str
+    argv: list[str]
+    links: list[tuple[str, str]]  # (path under Output/, what to call it)
+    status: str = "waiting"  # waiting → running → done | failed
+    log: LogWriter = field(default_factory=LogWriter)
+
+    @property
+    def finished(self) -> bool:
+        return self.status in ("done", "failed")
+
+
+class JobRunner:
+    """Runs `chattr-cli` arguments one job at a time, capturing what they print."""
+
+    def __init__(self) -> None:
+        self.jobs: dict[int, Job] = {}
+        self._queue: "queue.Queue[Job]" = queue.Queue()
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+    def submit(self, label: str, argv: list[str], links: list[tuple[str, str]]) -> Job:
+        with self._lock:
+            job = Job(len(self.jobs) + 1, label, argv, links)
+            self.jobs[job.number] = job
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._work, name="chattr-jobs", daemon=True)
+                self._thread.start()
+        self._queue.put(job)
+        return job
+
+    def _work(self) -> None:
+        from chattr import cli  # looked up at each run, and only now: cli imports this module too
+
+        while True:
+            job = self._queue.get()
+            job.status = "running"
+            code = 1
+            try:
+                with contextlib.redirect_stdout(job.log), contextlib.redirect_stderr(job.log):
+                    code = cli.main(job.argv)
+            except SystemExit as stop:  # the command line's own usage errors
+                code = stop.code if isinstance(stop.code, int) else 1
+            except Exception as error:  # a conversion that crashes must not end the server
+                job.log.write(f"❌ {error}\n")
+            job.status = "done" if code == 0 else "failed"
+
+
+def _whole_number(text: str) -> bool:
+    return text.strip().isdigit() and int(text) >= 1
+
+
+def check_form(service: ServiceInfo, form: dict[str, str]) -> list[str]:
+    """What is wrong with a submitted form, in plain words (empty when it can be converted)."""
+    errors = []
+    export = form.get("export", "").strip()
+    if not export and service.export_required:
+        errors.append("Choose the export to convert.")
+    elif export and not Path(export).expanduser().exists():
+        errors.append(f"Not found: {export}")
+    for name, label in (("contacts", "contacts file"), ("aliases", "names file (aliases)")):
+        given = form.get(name, "").strip()
+        if given and not Path(given).expanduser().is_file():
+            errors.append(f"The {label} was not found: {given}")
+    for name, label in (("workers", "Workers"), ("limit", "Limit")):
+        given = form.get(name, "").strip()
+        if given and not _whole_number(given):
+            errors.append(f"{label} must be a whole number, 1 or more.")
+    if (
+        service.key == "imessage"
+        and form.get("route") == "service"
+        and (form.get("html") or form.get("owner", "").strip() or form.get("aliases", "").strip())
+    ):
+        errors.append(
+            "Web pages, your name and the names file need the archive: choose “In the archive”, "
+            "or clear them for the JSON route."
+        )
+    return errors
+
+
+def convert_arguments(
+    root: Path, service: ServiceInfo, form: dict[str, str]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """The `chattr-cli convert` arguments for a form, and the pages to offer afterwards."""
+    key, route = service.key, form.get("route") or "central"
+    argv = ["--root", str(root), "convert", key]
+    if route == "service":
+        argv.append("--json")
+    if form.get("html"):
+        argv.append("--html")
+    for name in ("owner", "contacts", "region", "aliases"):
+        if form.get(name, "").strip():
+            argv += [f"--{name}", form[name].strip()]
+    if form.get("copy_media") and key in ("whatsapp", "messenger", "instagram"):
+        if route == "service":
+            where = root / "Output" / OUTPUT_FOLDERS[key] / "Attachments"
+        else:
+            where = root / "Output" / "Chattr" / "Messages"
+        argv += ["--attachments-dir", str(where)]
+    if key == "imessage":
+        for name, flag in (("spam_mode", "--spam-mode"), ("workers", "--workers"),
+                           ("limit", "--limit"), ("attachment_root", "--attachment-root")):  # fmt: skip
+            if form.get(name, "").strip():
+                argv += [flag, form[name].strip()]
+    if key == "voicemail":
+        if form.get("transcribe"):
+            argv.append("--transcribe")
+        for name in ("model", "language"):
+            if form.get(name, "").strip():
+                argv += [f"--{name}", form[name].strip()]
+    export = form.get("export", "").strip()
+    if export:
+        argv += ["--", str(Path(export).expanduser())]  # after "--": a name like -x is a file
+    if not form.get("html"):
+        return argv, []
+    if route == "service":
+        return argv, [(f"{OUTPUT_FOLDERS[key]}/index.html", "Open the pages")]
+    return argv, [("Chattr/index.html", "Open your pages")]
+
+
 class WebServer:
     """The local web page. `start()` serves in a thread; `stop()` ends it."""
 
@@ -149,6 +304,7 @@ class WebServer:
         ]
         self.token = secrets.token_urlsafe(24)
         self.env = _environment()
+        self.runner = JobRunner()
         self._http = ThreadingHTTPServer((self.address, port), _make_handler(self))
         self._http.daemon_threads = True
         self._thread: Optional[threading.Thread] = None
@@ -382,6 +538,8 @@ def _make_handler(web: WebServer) -> type[BaseHTTPRequestHandler]:
                 return self._browse(query)
             if path.startswith("/output/"):
                 return self._output(path.removeprefix("/output/"))
+            if path.startswith("/jobs/"):
+                return self._job(path.removeprefix("/jobs/"))
             self._message(404, "Not found", "There is nothing at that address.")
 
         def _read_body(self) -> Optional[dict[str, str]]:
@@ -403,6 +561,16 @@ def _make_handler(web: WebServer) -> type[BaseHTTPRequestHandler]:
                 return
             if form is None:
                 return self._message(413, "Too large", "That form is too large.")
+            path = urllib.parse.urlsplit(self.path).path
+            if path.startswith("/convert/"):
+                return self._convert(path.removeprefix("/convert/"), form)
+            if path == "/html":
+                job = web.runner.submit(
+                    "Make the web pages",
+                    ["--root", str(web.root), "html"],
+                    [("Chattr/index.html", "Open your pages")],
+                )
+                return self._redirect(f"/jobs/{job.number}")
             self._message(404, "Not found", "There is nothing at that address.")
 
         def _start(self, query: dict[str, list[str]]) -> None:
@@ -424,8 +592,39 @@ def _make_handler(web: WebServer) -> type[BaseHTTPRequestHandler]:
                 service=service,
                 fields=web.form_fields(service, {}),
                 values=values,
-                error=None,
+                errors=[],
             )
+
+        def _convert(self, key: str, form: dict[str, str]) -> None:
+            service = BY_KEY.get(key)
+            if service is None:
+                return self._message(404, "Not found", f"Chattr has no source called “{key}”.")
+            errors = check_form(service, form)
+            if errors:
+                return self._page(
+                    "convert.html",
+                    service=service,
+                    fields=web.form_fields(service, form or {"export": ""}),
+                    values={"export": form.get("export", "")},
+                    errors=errors,
+                )
+            argv, links = convert_arguments(web.root, service, form)
+            job = web.runner.submit(f"Convert {service.name}", argv, links)
+            self._redirect(f"/jobs/{job.number}")
+
+        def _job(self, rest: str) -> None:
+            number, _, tail = rest.partition("/")
+            job = web.runner.jobs.get(int(number)) if number.isdigit() else None
+            if job is None or tail not in ("", "status"):
+                return self._message(404, "Not found", "There is no such job.")
+            base = web.root / "Output"
+            links = [
+                {"href": f"/output/{urllib.parse.quote(path)}", "label": label}
+                for path, label in job.links
+                if job.status == "done" and (base / path).is_file()
+            ]
+            template = "job.html" if tail == "" else "job_status.html"
+            self._page(template, job=job, lines=job.log.lines(), links=links, first=tail == "")
 
         def _browse(self, query: dict[str, list[str]]) -> None:
             wanted = (query.get("path") or [str(web.roots[0])])[0]
