@@ -11,24 +11,33 @@ you can open in any browser.
 Chattr is developed as part of [Caixa](https://github.com/tonyknight/Caixa), an open-source
 digital-legacy project, and works on its own.
 
-> **Status: in active development.** The table below shows what works today.
+> **Status: in active development.** Everything below works and is tested against synthetic
+> exports (a fictional family; no real data). Real exports vary, so if one of yours does not read
+> correctly, that is a bug worth reporting to the Caixa project.
 
 ## What works today
 
-| Service | Status |
+Seven kinds of export go into **one SQLite archive** with stable message IDs, so running an import
+again adds only what is new:
+
+| Service | Reads |
 | --- | --- |
-| **WhatsApp** (iOS export, `_chat.txt`) | Imports into the database; HTML generation works. Android/locale formats and media handling are in progress. |
-| **Facebook Messenger** (Download Your Information JSON) | Imports into the database, one thread file at a time; attachments and shared links in progress. |
-| **iMessage** (macOS `chat.db`) | Reads the database directly (read-only) and exports JSON from the menu; database import in progress. |
-| **Email (MBOX)**, **Google Voice**, **iPhone Voicemail** | Planned for this development phase. |
+| **WhatsApp** | an exported chat (`_chat.txt` or “WhatsApp Chat with …”), with its media |
+| **Facebook Messenger** and **Instagram** | “Download your information” JSON, one conversation file at a time |
+| **iMessage** | the macOS `chat.db`, opened read-only, with attachments, tapbacks and spam tagging |
+| **Mail** | `.mbox` files (a Gmail Takeout), with attachments |
+| **Google Voice** | a Takeout folder of calls, texts and voicemail |
+| **iPhone voicemail** | a backup folder with `voicemail.db`, with optional local transcription |
 
-Planned next:
-- one unified database schema for every service;
-- repeated imports that add only new messages;
-- people-first HTML (all conversations with one person together, named by date).
+From the archive Chattr can:
 
-See the project requirements in Caixa:
-`docs/ai/Istanbul/Phase1-Collector/`.
+- write **people-first pages**: one folder per person (and per group) with a page for each year,
+  mail by year, and an index with a calendar. The pages carry their own data, so
+  `chattr-cli rebuild` can recreate the database from them;
+- **name people** from a contacts file (`.vcf`), a names file (aliases) and the owner's name;
+- optionally **translate** with a local, OpenAI-compatible model, and **transcribe** voicemail with
+  a local speech model. Both are off by default and never download anything;
+- run everything from a **small web page** (`chattr-cli serve`, below) or from the command line.
 
 ## Install
 
@@ -55,6 +64,32 @@ python -m chattr             # same as chattr-cli
 ```
 
 The command is `chattr-cli`, not `chattr`: on Linux, `chattr` is a standard system command.
+
+Every menu action is also a command:
+
+```bash
+chattr-cli convert whatsapp _chat.txt --owner "Your Name" --html
+chattr-cli people --contacts contacts.vcf       # who is still unnamed
+chattr-cli html                                 # write the pages again
+chattr-cli rebuild                              # recreate the database from the pages
+chattr-cli translate --endpoint URL --model NAME
+chattr-cli chats ~/Library/Messages/chat.db     # iMessage tools: chats, doctor
+chattr-cli serve                                # the web page
+```
+
+### The web page: `chattr-cli serve`
+
+```bash
+chattr-cli serve              # prints a link and opens it; Control-C stops it
+chattr-cli serve --no-browser --port 8765
+```
+
+A small page on your own computer for people who would rather click than type: choose where the
+messages come from, read how to export them, point at the file, set the options, watch it work,
+then open the pages. It is built from the same functions as the command line (the form becomes the
+arguments `chattr-cli convert` takes), needs only Python and Chattr, and never contacts the
+internet. It listens on `127.0.0.1` only; the link it prints carries a one-time token, and other
+programs and websites on your computer cannot use it.
 
 ## Where Chattr keeps its data
 

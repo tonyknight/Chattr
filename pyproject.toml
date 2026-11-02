@@ -31,7 +31,13 @@ chattr-cli = "chattr.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chattr = ["templates/*.html", "defaults/*.json", "defaults/Services/*.json"]
+chattr = [
+    "templates/*.html",
+    "templates/web/*.html",
+    "static/*",
+    "defaults/*.json",
+    "defaults/Services/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

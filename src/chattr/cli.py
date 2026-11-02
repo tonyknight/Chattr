@@ -9,12 +9,14 @@ Both call the same functions in `chattr.commands`, so anything the menu does can
     chattr-cli [--root DIR] rebuild [--from DIR] [--db FILE]
     chattr-cli [--root DIR] chats [chat.db]
     chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
+    chattr-cli [--root DIR] serve [--port N] [--no-browser]
 
 With no command, the menu runs.
 """
 
 import argparse
 import json
+import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -163,7 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=commands.DOCTOR_CHECKS,
         help="run only this check (repeatable; default: all)",
     )
-    for command in (convert, html, people, translate, rebuild, chats, doctor):
+    serve = sub.add_parser(
+        "serve", help="open a small web page on this computer to convert exports"
+    )
+    serve.add_argument(
+        "--port", type=int, default=0, help="port on this computer (default: any free port)"
+    )
+    serve.add_argument(
+        "--no-browser", action="store_true", help="print the link instead of opening it"
+    )
+    for command in (convert, html, people, translate, rebuild, chats, doctor, serve):
         # `--root` works before or after the command; SUPPRESS keeps an earlier value.
         command.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
@@ -385,6 +396,28 @@ def _run_doctor(settings: Settings, args: argparse.Namespace) -> int:
     return 0 if all(results) else 1
 
 
+def _run_serve(settings: Settings, args: argparse.Namespace) -> int:
+    from chattr.web import WebServer  # only needed here; keeps the command line light
+
+    try:
+        web = WebServer(Path(settings.root), port=args.port)
+    except OSError as error:
+        print(f"❌ Can't use port {args.port}: {error.strerror or error}")
+        return 1
+    print("Chattr is running on this computer only. Open this link in your web browser:")
+    print(f"  {web.url}")
+    print("Press Control-C to stop.")
+    if not args.no_browser:
+        webbrowser.open(web.url)
+    try:
+        web.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        web.close()
+    return 0
+
+
 SUBCOMMANDS = {
     "convert": _run_convert,
     "html": _run_html,
@@ -393,6 +426,7 @@ SUBCOMMANDS = {
     "rebuild": _run_rebuild,
     "chats": _run_chats,
     "doctor": _run_doctor,
+    "serve": _run_serve,
 }
 
 

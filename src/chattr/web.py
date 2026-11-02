@@ -330,6 +330,10 @@ class WebServer:
     def serve_forever(self) -> None:
         self._http.serve_forever()
 
+    def close(self) -> None:
+        """Release the port after `serve_forever` has returned."""
+        self._http.server_close()
+
     def stop(self) -> None:
         self._http.shutdown()
         self._http.server_close()

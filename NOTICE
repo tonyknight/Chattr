@@ -36,3 +36,11 @@ timestamp encoding, tapback codes) was learned in part by studying
 imessage-exporter. Chattr's other features, such as spam filtering, vCard
 contact resolution, group detection, attachment conversion and reports,
 and HTML output, are its own.
+
+
+Included: htmx
+--------------
+
+`chattr-cli serve` ships htmx 2.0.4 (src/chattr/static/htmx.min.js), licensed under the
+Zero-Clause BSD license. Its license text is in
+src/chattr/static/htmx-LICENSE.txt. See https://htmx.org
