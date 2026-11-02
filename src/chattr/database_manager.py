@@ -91,6 +91,9 @@ class DatabaseManager:
             self.conn.close()
             self.conn = None
 
+    def commit(self) -> None:
+        self._db.commit()
+
     def create_tables(self) -> None:
         """Bring the schema up to date (kept for older callers)."""
         apply_migrations(self._db)

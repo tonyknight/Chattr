@@ -23,6 +23,7 @@ from chattr.attachment_manager import (
 )
 from chattr.config import ConfigurationError, Settings, get_config, load_settings
 from chattr.preflight import run_preflight
+from chattr.importing import import_messages
 from chattr import __version__
 
 # iMessage operational functions migrated from imessage_main.py
@@ -289,10 +290,17 @@ def process_and_import(parser, service_name, db_manager):
     print(f"Parsing {service_name} data...")
     messages = parser.parse(source_path)
     if messages:
-        print(f"Found {len(messages)} messages. Inserting into database...")
+        print(f"Found {len(messages)} messages. Importing into the database...")
+        try:
+            settings = get_config()
+        except ConfigurationError:
+            settings = None
         with db_manager:
-            db_manager.insert_messages(messages, service_name)
-        print("Insertion complete.")
+            counts = import_messages(db_manager, settings, service_name, source_path, messages)
+        print(
+            f"Import complete: {counts.inserted} new, {counts.updated} updated, "
+            f"{counts.unchanged} already archived."
+        )
     else:
         print("No messages found or an error occurred during parsing.")
 
