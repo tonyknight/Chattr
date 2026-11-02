@@ -13,6 +13,8 @@ from chattr.parsers.imessage_database_parser import (
     Message,
     Attachment,
     Tapback,
+    message_parts,
+    net_tapbacks,
 )
 from chattr.attachment_manager import (
     AttachmentManager,
@@ -76,6 +78,44 @@ def print_message_summary(message: Message, attachments: List[Attachment], tapba
     print(f"{'='*80}")
 
 
+def _tapback_json(tapback: Tapback) -> Dict[str, Any]:
+    return {"type": tapback.type, "sender": tapback.sender, "action": tapback.action}
+
+
+def _attachment_json(att: Attachment, processed: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    info = processed.get(att.filename or "", {}) or processed.get(
+        os.path.basename(att.filename or ""), {}
+    )
+    return {
+        "original_filename": att.transfer_name or att.filename,
+        "filename": info.get("archival_filename", att.transfer_name or att.filename),
+        "attachment_path": info.get("archival_path"),
+        "mime_type": att.mime_type,
+        "file_size": att.total_bytes,
+        "is_sticker": att.is_sticker,
+        "file_hash": info.get("file_hash"),
+        "is_duplicate": info.get("is_duplicate", False),
+        "conversion_applied": info.get("conversion_applied", False),
+        "tapbacks": [],
+    }
+
+
+def _assign_tapbacks(message: Message, attachments_json: List[Dict[str, Any]]) -> List[Tapback]:
+    """Put each standing tapback on the attachment it targets; return those for the text.
+
+    A removal cancels the tapback it undoes, so neither is listed.
+    """
+    parts = message_parts(message.text, len(attachments_json))
+    on_message = []
+    for tapback in net_tapbacks(message.tapbacks or []):
+        part = parts[tapback.component_index] if tapback.component_index < len(parts) else None
+        if part is not None and part < len(attachments_json):
+            attachments_json[part]["tapbacks"].append(_tapback_json(tapback))
+        else:
+            on_message.append(tapback)
+    return on_message
+
+
 def export_to_json(
     messages: List[Message],
     db: iMessageDatabaseParser,
@@ -105,6 +145,11 @@ def export_to_json(
     for message in messages:
         # Use the pre-loaded attachments and tapbacks
 
+        attachments_json = [
+            _attachment_json(att, processed_attachments) for att in (message.attachments or [])
+        ]
+        message_tapbacks = _assign_tapbacks(message, attachments_json)
+
         # Convert to dict for JSON serialization
         message_data = {
             "id": message.rowid,
@@ -117,40 +162,8 @@ def export_to_json(
             "is_from_me": message.is_from_me,
             "is_read": message.is_read,
             "spam_reason": message.spam_reason,
-            "attachments": [
-                {
-                    "original_filename": att.transfer_name or att.filename,
-                    "filename": (
-                        processed_attachments.get(att.filename or "", {})
-                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
-                    ).get("archival_filename", att.transfer_name or att.filename),
-                    "attachment_path": (
-                        processed_attachments.get(att.filename or "", {})
-                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
-                    ).get("archival_path"),
-                    "mime_type": att.mime_type,
-                    "file_size": att.total_bytes,
-                    "is_sticker": att.is_sticker,
-                    "file_hash": (
-                        processed_attachments.get(att.filename or "", {})
-                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
-                    ).get("file_hash"),
-                    "is_duplicate": (
-                        processed_attachments.get(att.filename or "", {})
-                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
-                    ).get("is_duplicate", False),
-                    "conversion_applied": (
-                        processed_attachments.get(att.filename or "", {})
-                        or processed_attachments.get(os.path.basename(att.filename or ""), {})
-                    ).get("conversion_applied", False),
-                }
-                for att in (message.attachments or [])
-            ],
-            "tapbacks": [
-                {"type": tb.type, "sender": tb.sender, "action": tb.action}
-                for tb in (message.tapbacks or [])
-                if tb.action == "Added"
-            ],
+            "attachments": attachments_json,
+            "tapbacks": [_tapback_json(tb) for tb in message_tapbacks],
         }
 
         export_data.append(message_data)

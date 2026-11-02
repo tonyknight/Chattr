@@ -223,7 +223,7 @@ def build_imessage(out_dir: Path) -> Path:
             text=None,
             tapback=(2001, f"p:0/{hello}"),
             nanoseconds=False,
-        )  # loved
+        )  # liked
         w.message(
             ana_chat,
             family.at(2023, 6, 4, 18, 30),
@@ -243,14 +243,14 @@ def build_imessage(out_dir: Path) -> Path:
             sender=None,
             text=None,
             tapback=(2000, f"p:1/{photos}"),
-        )  # liked the second part (an attachment)
+        )  # loved the first attachment (part 1: the text is part 0)
         w.message(
             ana_chat,
             family.at(2023, 6, 4, 18, 46),
             sender=None,
             text=None,
             tapback=(3000, f"p:1/{photos}"),
-        )  # like removed
+        )  # love removed
 
         # Group chat: owner, Ana and João.
         group = w.chat("chat100000000000000001", [ana, joao], style=43, name=family.GROUP_NAME)

@@ -275,6 +275,65 @@ class Tapback:
     component_index: int
 
 
+def parse_associated_guid(value: Optional[str]) -> Optional[Tuple[str, int]]:
+    """Split a tapback's `associated_message_guid` into (target GUID, part index).
+
+    Three forms occur: `p:<part>/<GUID>` (current), `bp:<GUID>` (older, balloon plugins) and a
+    bare `<GUID>`. The last two target part 0.
+    """
+    if not value:
+        return None
+    if value.startswith("p:"):
+        head, separator, guid = value.partition("/")
+        if separator and head[2:].isdigit():
+            return guid, int(head[2:])
+        return None
+    if value.startswith("bp:"):
+        return value[3:], 0
+    return value, 0
+
+
+def message_parts(text: Optional[str], attachment_count: int) -> List[Optional[int]]:
+    """The parts of a message a tapback can target, in order.
+
+    Each entry is the index of the attachment it holds, or None for a run of text. Messages that
+    mark attachments in their text with U+FFFC (the object replacement character) follow the
+    text; otherwise the text, if any, is part 0 and the attachments follow in order.
+    """
+    content = text or ""
+    if "\ufffc" in content:
+        parts: List[Optional[int]] = []
+        index = 0
+        for position, chunk in enumerate(content.split("\ufffc")):
+            if position:
+                parts.append(index)
+                index += 1
+            if chunk.strip():
+                parts.append(None)
+        return parts
+    parts = [None] if content.strip() else []
+    return parts + list(range(attachment_count))
+
+
+def net_tapbacks(tapbacks: List["Tapback"]) -> List["Tapback"]:
+    """The tapbacks still standing: a later removal cancels the same sender's earlier tapback.
+
+    `tapbacks` must be in date order, as the readers return them.
+    """
+    standing: Dict[Tuple[str, str, int], "Tapback"] = {}
+    for tapback in tapbacks:
+        kind = tapback.type.replace("Removed ", "").replace("Removed", "").strip()
+        kind = {"Love": "Loved", "Like": "Liked", "Dislike": "Disliked", "Laugh": "Laughed"}.get(
+            kind, {"Emphasis": "Emphasized", "Question": "Questioned"}.get(kind, kind)
+        )
+        key = (tapback.sender, kind, tapback.component_index)
+        if tapback.action == "Added":
+            standing[key] = tapback
+        else:
+            standing.pop(key, None)
+    return list(standing.values())
+
+
 class iMessageDatabaseParser:
     """Main class for parsing iMessage database and extracting messages"""
 
@@ -1052,49 +1111,45 @@ class iMessageDatabaseParser:
 
         return attachments
 
-    def get_tapbacks_for_message(self, message_guid: str) -> List[Tapback]:
-        """Get all tapbacks for a specific message"""
-        query = """
-        SELECT m.*, h.id as handle_name
-        FROM message m
-        LEFT JOIN handle h ON m.handle_id = h.rowid
-        WHERE (m.associated_message_guid = ? OR m.associated_message_guid LIKE ?)
-        AND m.associated_message_type BETWEEN 2000 AND 3007
-        ORDER BY m.date
+    def _tapbacks_by_target(
+        self, conn: sqlite3.Connection, only_guid: Optional[str] = None
+    ) -> Dict[str, List[Tapback]]:
+        """Every tapback keyed by the GUID of the message it targets, in date order.
+
+        One query for all of them (no per-message or IN-list queries, which hit SQLite's variable
+        limit on large databases). `only_guid` narrows it to one target.
         """
+        query = """
+        SELECT m.associated_message_guid, m.associated_message_type, m.handle_id, m.is_from_me
+        FROM message m
+        WHERE m.associated_message_type >= 2000 AND m.associated_message_type < 4000
+        """
+        params: List[Any] = []
+        if only_guid:
+            query += " AND m.associated_message_guid LIKE ?"
+            params.append(f"%{only_guid}")
+        query += " ORDER BY m.date, m.ROWID"
 
-        cursor = self.conn.execute(query, (message_guid, f"p:0/{message_guid}"))
-        tapbacks = []
-
-        for row in cursor:
-            tapback_type = self.TAPBACK_TYPES.get(row["associated_message_type"], "Unknown")
-            sender = self._get_sender_name(self._row_get(row, "handle_id"), bool(row["is_from_me"]))
-
-            # Parse component index from associated_message_guid
-            component_index = 0
-            if self._row_get(row, "associated_message_guid"):
-                guid = row["associated_message_guid"]
-                if guid.startswith("p:"):
-                    try:
-                        parts = guid.split("/")
-                        if len(parts) > 0:
-                            index_part = parts[0].replace("p:", "")
-                            component_index = int(index_part)
-                    except (ValueError, IndexError):
-                        component_index = 0
-
-            action = "Removed" if row["item_type"] >= 3000 else "Added"
-
-            tapback = Tapback(
-                type=tapback_type,
-                sender=sender,
-                action=action,
-                target_message_guid=message_guid,
-                component_index=component_index,
+        by_target: Dict[str, List[Tapback]] = {}
+        for row in conn.execute(query, params):
+            target = parse_associated_guid(row[0])
+            if target is None or (only_guid and target[0] != only_guid):
+                continue
+            guid, part = target
+            by_target.setdefault(guid, []).append(
+                Tapback(
+                    type=self.TAPBACK_TYPES.get(row[1], "Unknown"),
+                    sender=self._get_sender_name(row[2], bool(row[3])),
+                    action="Removed" if row[1] >= 3000 else "Added",
+                    target_message_guid=guid,
+                    component_index=part,
+                )
             )
-            tapbacks.append(tapback)
+        return by_target
 
-        return tapbacks
+    def get_tapbacks_for_message(self, message_guid: str) -> List[Tapback]:
+        """Get all tapbacks for a specific message, in date order"""
+        return self._tapbacks_by_target(self.conn, message_guid).get(message_guid, [])
 
     def is_tapback_message(self, message: Message) -> bool:
         """Check if a message is a tapback"""
@@ -1211,150 +1266,19 @@ class iMessageDatabaseParser:
 
         print(f"Loading tapbacks for {len(messages):,} messages...")
 
-        # Create a mapping of message GUID to message object
-        message_map = {msg.guid: msg for msg in messages}
-
-        # Initialize all messages with empty tapbacks
-        for msg in messages:
-            msg.tapbacks = []
-
-        # Get all message GUIDs for the batch query
-        message_guids = list(message_map.keys())
-
-        if not message_guids:
-            return messages
-
-        # Batch load all tapbacks in a single efficient query
         with tqdm(total=1, desc="Loading tapbacks", unit="batch") as pbar:
-            try:
-                # Create placeholders for the IN clause
-                placeholders = ",".join(["?"] * len(message_guids))
-
-                # Also create placeholders for the LIKE patterns (p:0/GUID format)
-                like_patterns = [f"p:0/{guid}" for guid in message_guids]
-                like_placeholders = ",".join(["?"] * len(like_patterns))
-
-                query = f"""
-                SELECT m.*, h.id as handle_name
-                FROM message m
-                LEFT JOIN handle h ON m.handle_id = h.ROWID
-                WHERE (m.associated_message_guid IN ({placeholders})
-                       OR m.associated_message_guid IN ({like_placeholders}))
-                AND m.associated_message_type >= 2000 AND m.associated_message_type < 4000
-                ORDER BY m.date
-                """
-
-                # Combine all parameters
-                params = message_guids + like_patterns
-
-                cursor = self.conn.execute(query, params)
-
-                # Process all tapback results
-                for row in cursor:
-                    # Find the target message GUID
-                    associated_guid = self._row_get(row, "associated_message_guid")
-                    target_guid = None
-
-                    if associated_guid:
-                        if associated_guid in message_map:
-                            target_guid = associated_guid
-                        elif associated_guid.startswith("p:0/"):
-                            # Extract GUID from p:0/GUID format
-                            potential_guid = associated_guid[
-                                4:40
-                            ]  # p:0/ is 4 chars, GUID is 36 chars
-                            if potential_guid in message_map:
-                                target_guid = potential_guid
-
-                    if target_guid:
-                        tapback_type = self.TAPBACK_TYPES.get(
-                            row["associated_message_type"], "Unknown"
-                        )
-                        sender = self._get_sender_name(
-                            self._row_get(row, "handle_id"), bool(row["is_from_me"])
-                        )
-
-                        # Parse component index from associated_message_guid
-                        component_index = 0
-                        if associated_guid and associated_guid.startswith("p:"):
-                            try:
-                                parts = associated_guid.split("/")
-                                if len(parts) > 0:
-                                    index_part = parts[0].replace("p:", "")
-                                    component_index = int(index_part)
-                            except (ValueError, IndexError):
-                                component_index = 0
-
-                        action = "Removed" if row["associated_message_type"] >= 3000 else "Added"
-
-                        tapback = Tapback(
-                            type=tapback_type,
-                            sender=sender,
-                            action=action,
-                            target_message_guid=target_guid,
-                            component_index=component_index,
-                        )
-
-                        message_map[target_guid].tapbacks.append(tapback)  # type: ignore[union-attr]  # set to [] above
-
-                pbar.update(1)
-
-            except Exception as exc:
-                print(f"Batch tapback loading generated an exception: {exc}")
+            by_target = self._tapbacks_by_target(self.conn)
+            for message in messages:
+                message.tapbacks = list(by_target.get(message.guid, []))
+            pbar.update(1)
 
         return messages
 
     def _get_tapbacks_for_message_thread(self, message_guid: str) -> List[Tapback]:
-        """Get tapbacks for a message (thread-safe version)"""
-        # Create a new connection for this thread
+        """Get tapbacks for a message (thread-safe version: its own connection)"""
         thread_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-        thread_conn.row_factory = sqlite3.Row
-
         try:
-            query = """
-            SELECT m.*, h.id as handle_name
-            FROM message m
-            LEFT JOIN handle h ON m.handle_id = h.ROWID
-            WHERE (m.associated_message_guid = ? OR m.associated_message_guid LIKE ?)
-            AND m.associated_message_type >= 2000 AND m.associated_message_type < 4000
-            ORDER BY m.date
-            """
-
-            cursor = thread_conn.execute(query, (message_guid, f"p:0/{message_guid}"))
-            tapbacks = []
-
-            for row in cursor:
-                tapback_type = self.TAPBACK_TYPES.get(row["associated_message_type"], "Unknown")
-                sender = self._get_sender_name(
-                    self._row_get(row, "handle_id"), bool(row["is_from_me"])
-                )
-
-                # Parse component index from associated_message_guid
-                component_index = 0
-                if self._row_get(row, "associated_message_guid"):
-                    guid = row["associated_message_guid"]
-                    if guid.startswith("p:"):
-                        try:
-                            parts = guid.split("/")
-                            if len(parts) > 0:
-                                index_part = parts[0].replace("p:", "")
-                                component_index = int(index_part)
-                        except (ValueError, IndexError):
-                            component_index = 0
-
-                action = "Removed" if row["associated_message_type"] >= 3000 else "Added"
-
-                tapback = Tapback(
-                    type=tapback_type,
-                    sender=sender,
-                    action=action,
-                    target_message_guid=message_guid,
-                    component_index=component_index,
-                )
-                tapbacks.append(tapback)
-
-            return tapbacks
-
+            return self._tapbacks_by_target(thread_conn, message_guid).get(message_guid, [])
         finally:
             thread_conn.close()
 
