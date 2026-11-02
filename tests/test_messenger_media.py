@@ -7,14 +7,14 @@ import json
 import sqlite3
 from pathlib import Path
 
-from fixtures import FamilyExports
+from fixtures import FamilyExports, family
 
 from chattr import cli, commands
 from chattr.config import Settings
 
 
 def _files(folder: Path) -> list[Path]:
-    return sorted(p for p in folder.rglob("*") if p.is_file())
+    return sorted(p for p in folder.rglob("*") if p.is_file() and not p.name.startswith("."))
 
 
 def _digest(folder: Path) -> dict[str, str]:
@@ -31,8 +31,9 @@ def test_every_attachment_is_archived_dated_by_its_message(
     settings = Settings.load(chattr_root)
     commands.convert(settings, "messenger", export, attachments_dir=archive)
     (archived,) = _files(archive)
-    assert archived.relative_to(archive).parts[:3] == ("Messenger", "2019", "7 - July")
-    assert archived.name.startswith("(2019-07-21) 16-10-00")
+    joao = family.JOAO.usernames["messenger"]
+    assert archived.relative_to(archive).parts[:2] == (joao, "Attachments")
+    assert archived.name == f"(2019-07-21) 16-10-00 {joao} 1.png"
     assert _digest(export_root) == originals
     with sqlite3.connect(commands.central_database(settings)) as db:
         ((stored,),) = db.execute("SELECT storage_path FROM attachments").fetchall()

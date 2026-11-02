@@ -64,7 +64,7 @@ def test_attachments_are_archived_when_a_folder_is_given(
         attachments_dir=archive,
         route="service",
     )
-    archived = [p for p in archive.rglob("*") if p.is_file()]
+    archived = [p for p in archive.rglob("*") if p.is_file() and not p.name.startswith(".")]
     sources = [p for p in (db_path.parent / "Attachments").rglob("*") if p.is_file()]
     distinct = {hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     # Two different photos sent in the same second must both survive (no overwriting).

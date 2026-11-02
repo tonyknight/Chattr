@@ -27,7 +27,7 @@ from chattr.transcription import Transcriber
 from chattr.database_manager import DatabaseManager, ImportCounts
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
-from chattr.media_archive import archive_media
+from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.google_voice_parser import GoogleVoiceParser
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
@@ -217,13 +217,36 @@ def _media_files(message: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     return []
 
 
-def _archive_media(messages: list[dict[str, Any]], destination: PathLike, service: str) -> None:
+def _person_label(conversation: ConversationRecord) -> str:
+    """Whose folder a conversation's files go in: the other person, or the group's name."""
+    name = conversation.name or conversation.source_id
+    for prefix in ("WhatsApp Chat with ", "WhatsApp Chat - "):
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
+
+
+def _archive_media(
+    messages: list[dict[str, Any]],
+    destination: PathLike,
+    service: str,
+    conversation: ConversationRecord,
+) -> None:
     """Copy each message's media into the archive; record where it went on the message."""
-    found = [(holder, path, m["timestamp"]) for m in messages for holder, path in _media_files(m)]
-    archived = archive_media([(path, when) for _, path, when in found], destination, service)
-    for holder, path, _ in found:
+    person, group = _person_label(conversation), conversation.type == "group"
+    found = [
+        (holder, path, m["timestamp"], m.get("author"))
+        for m in messages
+        for holder, path in _media_files(m)
+    ]
+    archived = archive_media(
+        [MediaItem(path, when, sender, person, group) for _, path, when, sender in found],
+        destination,
+        service,
+    )
+    for holder, path, _, _ in found:
         info = archived.get(path)
-        if info and info.archival_path:
+        if info and info.archival_path and info.processing_status == "completed":
             holder["archival_path"] = info.archival_path
 
 
@@ -280,9 +303,9 @@ def convert(
     if not messages:
         raise CommandError(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
-    if attachments_dir:
-        _archive_media(messages, attachments_dir, name)
     conversation = _conversation(name, export, parser, messages)
+    if attachments_dir:
+        _archive_media(messages, attachments_dir, name, conversation)
 
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:

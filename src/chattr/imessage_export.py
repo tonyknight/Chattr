@@ -135,8 +135,9 @@ def export_to_json(
     # Process attachments if directory is specified
     processed_attachments = {}
     if attachments_dir:
+        groups = {cid for cid, chat in db.enhanced_chats.items() if chat.is_group_chat}
         processed_attachments = process_message_attachments(
-            messages, attachments_dir, source_attachments_dir, attachment_workers
+            messages, attachments_dir, source_attachments_dir, attachment_workers, groups
         )
 
     print("Converting to JSON format...")
@@ -176,7 +177,11 @@ def export_to_json(
 
 
 def process_message_attachments(
-    messages: List[Message], attachments_dir: str, source_attachments_dir: str, max_workers: int = 4
+    messages: List[Message],
+    attachments_dir: str,
+    source_attachments_dir: str,
+    max_workers: int = 4,
+    group_chats: Optional[set] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Process all attachments from messages and return mapping of original filename to processed info
@@ -186,6 +191,7 @@ def process_message_attachments(
         attachments_dir: Target directory for archival attachments
         source_attachments_dir: Source directory where original attachments are stored
         max_workers: Number of parallel workers for processing
+        group_chats: Chat ids that are group chats (their files go under Groups/)
 
     Returns:
         Dictionary mapping original filenames to processed attachment info
@@ -218,6 +224,9 @@ def process_message_attachments(
                 )
 
                 if attachment_info:
+                    attachment_info.sender = message.sender
+                    attachment_info.person = message.chat_name
+                    attachment_info.is_group = message.chat_id in (group_chats or set())
                     attachments_with_dates.append((attachment_info, message.timestamp))
 
     if not attachments_with_dates:

@@ -18,7 +18,7 @@ def _export(fixture_family: FamilyExports, folder: str) -> Path:
 
 
 def _files(folder: Path) -> list[Path]:
-    return sorted(p for p in folder.rglob("*") if p.is_file())
+    return sorted(p for p in folder.rglob("*") if p.is_file() and not p.name.startswith("."))
 
 
 def _digest(folder: Path) -> dict[str, str]:
@@ -33,8 +33,8 @@ def test_ios_media_is_dated_by_the_message(
     originals = _digest(export.parent)
     commands.convert(Settings.load(chattr_root), "whatsapp", export, attachments_dir=archive)
     (archived,) = _files(archive)
-    assert archived.relative_to(archive).parts[:3] == ("WhatsApp", "2024", "3 - March")
-    assert archived.name.startswith("(2024-03-01) 14-05-09")
+    assert archived.relative_to(archive).parts[:2] == ("Ana Costa", "Attachments")
+    assert archived.name == "(2024-03-01) 14-05-09 Ana Costa 1.png"
     assert _digest(export.parent) == originals  # the originals are untouched
 
 
@@ -45,7 +45,8 @@ def test_android_media_is_dated_by_the_message(
     export = _export(fixture_family, "WhatsApp Chat with Rui Pereira")
     commands.convert(Settings.load(chattr_root), "whatsapp", export, attachments_dir=archive)
     (archived,) = _files(archive)
-    assert archived.name.startswith("(2024-04-15) 10-06-00")
+    assert archived.relative_to(archive).parts[:2] == ("Rui Pereira", "Attachments")
+    assert archived.name == "(2024-04-15) 10-06-00 Rui Pereira 1.png"
 
 
 def test_the_archive_path_is_recorded_on_the_attachment(

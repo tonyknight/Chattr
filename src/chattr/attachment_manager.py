@@ -43,18 +43,17 @@ Example: /Attachments/iMessage/2024/3 - March/(2024-03-15) 14-30-25 [123].jpg
 """
 
 import os
+import re
 import shutil
 import hashlib
 import subprocess
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
-import tempfile
-import threading
 
 try:
     from PIL import Image, ExifTags
@@ -106,6 +105,16 @@ class AttachmentInfo:
     conversion_applied: bool = False
     metadata_enhanced: bool = False
 
+    # Who it came from and whose folder it belongs in
+    sender: Optional[str] = None
+    person: Optional[str] = None
+    is_group: bool = False
+
+    # Filled in while archiving
+    target_date: Optional[datetime] = None  # capture date when the file has one, else message time
+    has_capture_date: bool = False
+    reused: bool = False  # the archive already holds this exact content under this name
+
     # Processing status
     processing_status: str = "pending"  # pending, processing, completed, failed
     error_message: Optional[str] = None
@@ -136,6 +145,7 @@ class AttachmentProcessor:
 
     def __init__(self, service_name: str = "iMessage"):
         self.service_name = service_name
+        self.exiftool = shutil.which("exiftool")  # capture dates are read and written with it
         self.supported_image_formats = {
             ".heic",
             ".png",
@@ -166,6 +176,8 @@ class AttachmentProcessor:
 
     def extract_exif_date(self, file_path: str) -> Optional[datetime]:
         """Extract DateTimeOriginal from EXIF data using ExifTool with robust parsing"""
+        if not self.exiftool:
+            return None
         try:
             # Use ExifTool without format specification to get raw data
             result = subprocess.run(
@@ -236,6 +248,8 @@ class AttachmentProcessor:
 
     def embed_exif_date(self, file_path: str, date_time: datetime) -> bool:
         """Embed DateTimeOriginal into file using ExifTool"""
+        if not self.exiftool:
+            return False
         try:
             date_str = date_time.strftime("%Y:%m:%d %H:%M:%S")
             result = subprocess.run(
@@ -351,71 +365,44 @@ class AttachmentProcessor:
             print(f"Warning: Failed to convert {input_path} to AAC: {e}")
             return False
 
-    def generate_archival_filename(self, attachment: AttachmentInfo, target_date: datetime) -> str:
-        """Generate standardized archival filename based on date and type"""
-        # Extract file extension
-        original_ext = Path(attachment.original_filename).suffix.lower()
 
-        # Determine target extension based on conversion rules
-        if original_ext in self.image_conversion_formats:
-            target_ext = ".jpg"
-        elif original_ext in self.audio_conversion_formats:
-            target_ext = ".aac"
-        else:
-            target_ext = original_ext
+MANIFEST_NAME = ".attachments.json"
+_UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+#: File types that can carry a capture date in standard metadata (GIF and BMP cannot).
+_DATED_FORMATS = {".jpg", ".jpeg", ".png", ".heic", ".tif", ".tiff", ".webp"}
 
-        # Check if we have milliseconds in the date (from EXIF or message timestamp)
-        if target_date.microsecond > 0:
-            # Format with milliseconds
-            milliseconds = target_date.microsecond // 1000
-            date_part = target_date.strftime("(%Y-%m-%d) %H-%M-%S")
-            filename = f"{date_part} [{milliseconds:03d}]{target_ext}"
-        else:
-            # Format without milliseconds
-            filename = target_date.strftime("(%Y-%m-%d) %H-%M-%S") + target_ext
 
-        # For non-image/video files, prepend date to original filename
-        if (
-            original_ext not in self.supported_image_formats
-            and original_ext not in self.supported_video_formats
-        ):
-            date_prefix = target_date.strftime("(%Y-%m-%d) %H-%M-%S ")
-            original_name = Path(attachment.original_filename).stem
-            filename = f"{date_prefix}{original_name}{target_ext}"
+def safe_name(text: Optional[str], fallback: str = "Unknown", limit: int = 80) -> str:
+    """A person or sender name made safe for a file or folder name."""
+    cleaned = re.sub(r"\s+", " ", _UNSAFE.sub("-", text or "")).strip(" .-")
+    return cleaned[:limit].strip(" .-") or fallback
 
-        return filename
 
-    def generate_archival_path(
-        self, attachment: AttachmentInfo, target_date: datetime, base_attachments_dir: str
-    ) -> Tuple[str, str]:
-        """Generate full archival path and filename"""
-        # Create year and month folder structure
-        year = target_date.year
-        month_num = target_date.month
-        month_name = target_date.strftime("%B")
-
-        # Create folder structure: /Attachments/{service}/{year}/{month_number} - {month_name}/
-        folder_path = os.path.join(
-            base_attachments_dir, self.service_name, str(year), f"{month_num} - {month_name}"
-        )
-
-        # Generate filename
-        filename = self.generate_archival_filename(attachment, target_date)
-
-        # Full path
-        full_path = os.path.join(folder_path, filename)
-
-        return folder_path, full_path
+def _sort_key(when: datetime) -> float:
+    aware = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    return aware.timestamp()
 
 
 class AttachmentManager:
-    """
-    Main attachment management controller
+    """The one attachment pipeline: every service's files, archived the same way.
 
-    Orchestrates the entire attachment processing pipeline with support for
-    multiple messaging services, parallel processing, and comprehensive statistics.
+    Items are `(AttachmentInfo, message time)`. Each file is copied into
+    `<archive>/<Person>/Attachments/` (groups: `Groups/<Name>/Attachments/`) as
 
-    Designed with MVC architecture for easy Swift porting.
+        (YYYY-MM-DD) HH-MM-SS <sender> <n>.<ext>
+
+    dated by the file's own capture date when it has one, else by the message time as stated.
+    The work is done in three steps so the result is the same on every run:
+
+    1. hash each file and read its capture date (in parallel);
+    2. give each file its name, in time then source order, numbering `<n>` so nothing collides;
+    3. copy (in parallel), writing the message date into standard metadata on the copy when the
+       file has none and exiftool is installed.
+
+    Originals are never moved or changed. A manifest in the archive (`.attachments.json`: relative
+    path → SHA-256 of the source) lets a re-run reuse the names it already placed, so nothing is
+    duplicated; a file the manifest doesn't know is never overwritten. Conversion (HEIC/PNG/WebP
+    to JPG, CAF to AAC) is off unless asked for.
     """
 
     def __init__(
@@ -424,36 +411,25 @@ class AttachmentManager:
         service_name: str = "iMessage",
         move_files: bool = False,
         max_workers: int = 4,
+        convert: bool = False,
     ):
         """
-        Initialize AttachmentManager
-
         Args:
-            base_attachments_dir: Root directory for archival attachments
-            service_name: Name of messaging service (iMessage, WhatsApp, etc.)
-            move_files: If True, move files instead of copying (for non-iMessage services)
-            max_workers: Number of parallel processing workers
+            base_attachments_dir: Root of the archive
+            service_name: The service the files came from (reporting only)
+            move_files: Move instead of copy (originals are then gone; off by default)
+            max_workers: Parallel workers for hashing and copying
+            convert: Convert HEIC/PNG/WebP to JPG and CAF to AAC while archiving
         """
         self.base_attachments_dir = Path(base_attachments_dir)
         self.service_name = service_name
         self.move_files = move_files
         self.max_workers = max_workers
-
-        # Initialize processor
+        self.convert = convert
         self.processor = AttachmentProcessor(service_name)
-
-        # Duplicate tracking
-        self.hash_to_path: Dict[str, str] = {}
-        self.processed_hashes: Dict[str, AttachmentInfo] = {}
-
-        # Archival paths already given out in this run (workers run in parallel)
-        self._claimed_paths: set = set()
-        self._claim_lock = threading.Lock()
-
-        # Statistics
         self.stats = ProcessingStats()
-
-        # Ensure base directory exists
+        self._claimed: set[str] = set()
+        self._manifest = self._load_manifest()
         self.base_attachments_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"AttachmentManager initialized for {service_name}")
@@ -461,39 +437,26 @@ class AttachmentManager:
         print(f"Mode: {'MOVE' if move_files else 'COPY'} files")
         print(f"Workers: {max_workers}")
 
-    def _claim_path(self, path: str) -> str:
-        """Reserve `path` for this run, numbering it (" 2", " 3", …) if already taken.
+    # --- Manifest ---------------------------------------------------------------------------
 
-        Only names given out in this run count, so re-running into the same folder overwrites
-        its own earlier output instead of piling up copies. Full collision-free naming for
-        every service is ticket 13 (one attachment pipeline).
-        """
-        base, extension = os.path.splitext(path)
-        with self._claim_lock:
-            candidate, number = path, 1
-            while candidate in self._claimed_paths:
-                number += 1
-                candidate = f"{base} {number}{extension}"
-            self._claimed_paths.add(candidate)
-        return candidate
-
-    def process_single_attachment(
-        self, attachment: AttachmentInfo, message_date: datetime
-    ) -> AttachmentInfo:
-        """
-        Process a single attachment through the complete pipeline
-
-        Args:
-            attachment: AttachmentInfo object with source details
-            message_date: Date when message was sent (fallback for EXIF date)
-
-        Returns:
-            Updated AttachmentInfo with processing results
-        """
-        attachment.processing_status = "processing"
-
+    def _load_manifest(self) -> dict[str, dict[str, str]]:
         try:
-            # Step 0: Skip Apple's proprietary plugin payload attachments
+            data = json.loads((self.base_attachments_dir / MANIFEST_NAME).read_text("utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_manifest(self) -> None:
+        path = self.base_attachments_dir / MANIFEST_NAME
+        temporary = path.with_name(path.name + ".part")
+        temporary.write_text(json.dumps(self._manifest, indent=2, sort_keys=True), "utf-8")
+        os.replace(temporary, path)
+
+    # --- Step 1: look at the file -------------------------------------------------------------
+
+    def _prepare(self, attachment: AttachmentInfo, message_date: datetime) -> AttachmentInfo:
+        attachment.processing_status = "processing"
+        try:
             if attachment.original_filename.lower().endswith(".pluginpayloadattachment"):
                 attachment.processing_status = "skipped"
                 attachment.error_message = (
@@ -501,222 +464,148 @@ class AttachmentManager:
                 )
                 self.stats.skipped_processing += 1
                 return attachment
-
-            # Step 1: Validate source file exists
-            if not os.path.exists(attachment.original_path):
-                raise Exception(f"Source file not found: {attachment.original_path}")
-
-            # Step 2: Calculate file hash for duplicate detection
+            if not os.path.isfile(attachment.original_path):
+                raise FileNotFoundError(f"Source file not found: {attachment.original_path}")
             attachment.file_hash = self.processor.calculate_file_hash(attachment.original_path)
-
-            # Step 3: Check for duplicates
-            if attachment.file_hash in self.processed_hashes:
-                duplicate_attachment = self.processed_hashes[attachment.file_hash]
-                attachment.is_duplicate = True
-                attachment.duplicate_of = duplicate_attachment.archival_path
-                attachment.processing_status = "completed"
-                self.stats.duplicates_found += 1
-                return attachment
-
-            # Step 4: Determine target date (EXIF first, then message date)
-            exif_date = self.processor.extract_exif_date(attachment.original_path)
-            target_date = exif_date if exif_date else message_date
-
-            # Step 5: Generate archival path and filename
-            folder_path, full_archival_path = self.processor.generate_archival_path(
-                attachment, target_date, str(self.base_attachments_dir)
-            )
-
-            # Two different files can share a timestamp; never let one overwrite the other.
-            full_archival_path = self._claim_path(full_archival_path)
-
-            # Step 6: Create target directory
-            os.makedirs(folder_path, exist_ok=True)
-
-            # Step 7: Determine if conversion is needed
-            original_ext = Path(attachment.original_filename).suffix.lower()
-            needs_conversion = original_ext in self.processor.conversion_formats
-
-            if needs_conversion:
-                # Step 8a: Convert format based on type
-                temp_path = full_archival_path
-                conversion_success = False
-
-                if original_ext in self.processor.image_conversion_formats:
-                    # Convert image to JPG
-                    conversion_success = self.processor.convert_image_to_jpg(
-                        attachment.original_path, temp_path
-                    )
-                elif original_ext in self.processor.audio_conversion_formats:
-                    # Convert audio to AAC
-                    conversion_success = self.processor.convert_caf_to_aac(
-                        attachment.original_path, temp_path
-                    )
-
-                if conversion_success:
-                    attachment.conversion_applied = True
-                    self.stats.conversions_applied += 1
-                else:
-                    # Fallback to copy if conversion fails
-                    if self.move_files:
-                        shutil.move(attachment.original_path, full_archival_path)
-                    else:
-                        shutil.copy2(attachment.original_path, full_archival_path)
-            else:
-                # Step 8b: Copy/move file without conversion
-                if self.move_files:
-                    shutil.move(attachment.original_path, full_archival_path)
-                else:
-                    shutil.copy2(attachment.original_path, full_archival_path)
-
-            # Step 9: Embed EXIF metadata if needed
-            if not exif_date and target_date:
-                if self.processor.embed_exif_date(full_archival_path, target_date):
-                    attachment.metadata_enhanced = True
-                    self.stats.metadata_enhanced += 1
-
-            # Step 10: Update attachment info
-            attachment.archival_path = os.path.relpath(
-                full_archival_path, self.base_attachments_dir
-            )
-            attachment.archival_filename = os.path.basename(full_archival_path)
-            attachment.processing_status = "completed"
-
-            # Step 11: Track for duplicate detection
-            self.processed_hashes[attachment.file_hash] = attachment
-            self.hash_to_path[attachment.file_hash] = full_archival_path
-
-            self.stats.processed_successfully += 1
-
-        except Exception as e:
+            capture = self.processor.extract_exif_date(attachment.original_path)
+            attachment.has_capture_date = capture is not None
+            attachment.target_date = capture or message_date
+        except Exception as error:
             attachment.processing_status = "failed"
-            attachment.error_message = str(e)
+            attachment.error_message = str(error)
             self.stats.failed_processing += 1
-            print(f"Error processing {attachment.original_filename}: {e}")
-
+            print(f"Error processing {attachment.original_filename}: {error}")
         return attachment
 
-    def create_symlink_for_duplicate(
-        self, duplicate_attachment: AttachmentInfo, target_date: datetime
-    ) -> bool:
-        """Create symlink for duplicate file in appropriate date folder with conflict resolution"""
+    # --- Step 2: give it a name ---------------------------------------------------------------
+
+    def _extension(self, attachment: AttachmentInfo) -> str:
+        extension = Path(attachment.original_filename).suffix.lower()
+        if self.convert and extension in self.processor.image_conversion_formats:
+            return ".jpg"
+        if self.convert and extension in self.processor.audio_conversion_formats:
+            return ".aac"
+        return extension
+
+    def _folder(self, attachment: AttachmentInfo) -> str:
+        person = safe_name(attachment.person)
+        owner = f"Groups/{person}" if attachment.is_group else person
+        return f"{owner}/Attachments"
+
+    def _plan(self, attachment: AttachmentInfo) -> None:
+        """Choose `<folder>/(date) time sender n.ext`: the first number not taken by other content."""
+        when = attachment.target_date or datetime.now()
+        stamp = when.strftime("(%Y-%m-%d) %H-%M-%S")
+        if when.microsecond:
+            stamp += f" [{when.microsecond // 1000:03d}]"
+        stem = f"{stamp} {safe_name(attachment.sender)}"
+        folder = self._folder(attachment)
+        extension = self._extension(attachment)
+        number = 1
+        while True:
+            relative = f"{folder}/{stem} {number}{extension}"
+            number += 1
+            if relative in self._claimed:
+                continue
+            target = self.base_attachments_dir / relative
+            if not target.exists():
+                break
+            known = self._manifest.get(relative, {}).get("sha256")
+            if known and known == attachment.file_hash and not self.convert:
+                attachment.reused = True  # this exact content is already here under this name
+                break
+        self._claimed.add(relative)
+        attachment.archival_path = relative
+        attachment.archival_filename = relative.rsplit("/", 1)[1]
+
+    # --- Step 3: write it ---------------------------------------------------------------------
+
+    def _write(self, attachment: AttachmentInfo, message_date: datetime) -> AttachmentInfo:
+        if attachment.processing_status in ("failed", "skipped") or not attachment.archival_path:
+            return attachment
         try:
-            if not duplicate_attachment.duplicate_of:
-                return False
+            target = self.base_attachments_dir / attachment.archival_path
+            if attachment.reused:
+                attachment.processing_status = "completed"
+                self.stats.processed_successfully += 1
+                return attachment
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = attachment.original_path
+            converted = False
+            extension = Path(attachment.original_filename).suffix.lower()
+            if self.convert and extension in self.processor.image_conversion_formats:
+                converted = self.processor.convert_image_to_jpg(source, str(target))
+            elif self.convert and extension in self.processor.audio_conversion_formats:
+                converted = self.processor.convert_caf_to_aac(source, str(target))
+            if converted:
+                attachment.conversion_applied = True
+                self.stats.conversions_applied += 1
+            else:
+                if self.convert and target.suffix != extension:
+                    # Conversion failed: keep the file as it is, under its own extension.
+                    target = target.with_suffix(extension)
+                    attachment.archival_path = str(target.relative_to(self.base_attachments_dir))
+                    attachment.archival_filename = target.name
+                if self.move_files:
+                    shutil.move(source, str(target))
+                else:
+                    shutil.copy2(source, target)
+            if not attachment.has_capture_date and target.suffix.lower() in _DATED_FORMATS:
+                if self.processor.embed_exif_date(str(target), message_date):
+                    attachment.metadata_enhanced = True
+                    self.stats.metadata_enhanced += 1
+            attachment.processing_status = "completed"
+            self.stats.processed_successfully += 1
+        except Exception as error:
+            attachment.processing_status = "failed"
+            attachment.error_message = str(error)
+            self.stats.failed_processing += 1
+            print(f"Error processing {attachment.original_filename}: {error}")
+        return attachment
 
-            # Generate path where symlink should be created
-            folder_path, symlink_path = self.processor.generate_archival_path(
-                duplicate_attachment, target_date, str(self.base_attachments_dir)
-            )
-
-            # Create target directory
-            os.makedirs(folder_path, exist_ok=True)
-
-            # Handle naming conflicts by adding suffix
-            original_symlink_path = symlink_path
-            counter = 1
-            while os.path.exists(symlink_path):
-                # Add counter suffix to filename
-                base_name = os.path.splitext(os.path.basename(original_symlink_path))[0]
-                extension = os.path.splitext(os.path.basename(original_symlink_path))[1]
-                new_filename = f"{base_name}_dup{counter}{extension}"
-                symlink_path = os.path.join(folder_path, new_filename)
-                counter += 1
-
-                # Prevent infinite loop
-                if counter > 1000:
-                    print(
-                        f"Warning: Too many duplicate conflicts for {duplicate_attachment.original_filename}"
-                    )
-                    return False
-
-            # Create relative symlink to original file
-            original_path = os.path.join(
-                str(self.base_attachments_dir), duplicate_attachment.duplicate_of
-            )
-            relative_path = os.path.relpath(original_path, folder_path)
-
-            os.symlink(relative_path, symlink_path)
-
-            # Update duplicate attachment info
-            duplicate_attachment.archival_path = os.path.relpath(
-                symlink_path, self.base_attachments_dir
-            )
-            duplicate_attachment.archival_filename = os.path.basename(symlink_path)
-
-            return True
-
-        except Exception as e:
-            print(f"Warning: Failed to create symlink for duplicate: {e}")
-            return False
+    # --- The pipeline -------------------------------------------------------------------------
 
     def process_attachments_parallel(
         self, attachments_with_dates: List[Tuple[AttachmentInfo, datetime]]
     ) -> List[AttachmentInfo]:
-        """
-        Process multiple attachments in parallel with progress tracking
-
-        Args:
-            attachments_with_dates: List of (AttachmentInfo, message_date) tuples
-
-        Returns:
-            List of processed AttachmentInfo objects
-        """
+        """Archive `(AttachmentInfo, message_time)` pairs; returns them, processed, in time order."""
         if not attachments_with_dates:
             return []
-
-        print(
-            f"Processing {len(attachments_with_dates):,} attachments with {self.max_workers} workers..."
+        items = sorted(
+            attachments_with_dates, key=lambda it: (_sort_key(it[1]), it[0].original_path)
         )
+        print(f"Processing {len(items):,} attachments with {self.max_workers} workers...")
+        self.stats.total_attachments = len(items)
+        self.stats.total_size_bytes = sum(att.file_size for att, _ in items)
+        started = datetime.now()
 
-        # Initialize statistics
-        self.stats.total_attachments = len(attachments_with_dates)
-        self.stats.total_size_bytes = sum(att.file_size for att, _ in attachments_with_dates)
-
-        start_time = datetime.now()
-        processed_attachments = []
-
-        # Process attachments in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all tasks
-            future_to_attachment = {
-                executor.submit(self.process_single_attachment, attachment, message_date): (
-                    attachment,
-                    message_date,
-                )
-                for attachment, message_date in attachments_with_dates
-            }
+            with tqdm(total=len(items) * 2, desc="Processing attachments") as pbar:
+                prepared = []
+                for done in executor.map(lambda it: self._prepare(*it), items):
+                    prepared.append(done)
+                    pbar.update(1)
+                seen: set[str] = set()
+                for attachment in prepared:  # sequential and sorted: the names are deterministic
+                    if attachment.processing_status == "processing":
+                        if attachment.file_hash in seen:
+                            attachment.is_duplicate = True  # same content seen earlier in this run
+                            self.stats.duplicates_found += 1
+                        seen.add(attachment.file_hash or "")
+                        self._plan(attachment)
+                dates = [when for _, when in items]
+                results = []
+                for done in executor.map(lambda pair: self._write(*pair), zip(prepared, dates)):
+                    results.append(done)
+                    pbar.update(1)
 
-            # Process completed tasks with progress bar
-            with tqdm(total=len(attachments_with_dates), desc="Processing attachments") as pbar:
-                for future in as_completed(future_to_attachment):
-                    try:
-                        processed_attachment = future.result()
-                        processed_attachments.append(processed_attachment)
-
-                        # Create symlinks for duplicates if needed
-                        if processed_attachment.is_duplicate:
-                            _, message_date = future_to_attachment[future]
-                            self.create_symlink_for_duplicate(processed_attachment, message_date)
-
-                        pbar.update(1)
-
-                    except Exception as e:
-                        attachment, _ = future_to_attachment[future]
-                        print(f"Error processing attachment {attachment.original_filename}: {e}")
-                        attachment.processing_status = "failed"
-                        attachment.error_message = str(e)
-                        processed_attachments.append(attachment)
-                        self.stats.failed_processing += 1
-                        pbar.update(1)
-
-        # Calculate processing time
-        self.stats.processing_time_seconds = (datetime.now() - start_time).total_seconds()
-
-        # Print statistics
+        for attachment in results:
+            if attachment.processing_status == "completed" and attachment.archival_path:
+                self._manifest[attachment.archival_path] = {"sha256": attachment.file_hash or ""}
+        self._save_manifest()
+        self.stats.processing_time_seconds = (datetime.now() - started).total_seconds()
         self.print_processing_statistics()
-
-        return processed_attachments
+        return results
 
     def print_processing_statistics(self):
         """Print comprehensive processing statistics"""
@@ -725,19 +614,11 @@ class AttachmentManager:
         print(f"Successfully processed: {self.stats.processed_successfully:,}")
         print(f"Failed processing: {self.stats.failed_processing:,}")
         print(f"Skipped processing: {self.stats.skipped_processing:,} (plugin payload attachments)")
-        print(f"Duplicates found: {self.stats.duplicates_found:,}")
+        print(f"Same content seen again: {self.stats.duplicates_found:,}")
         print(f"Format conversions: {self.stats.conversions_applied:,}")
         print(f"Metadata enhanced: {self.stats.metadata_enhanced:,}")
         print(f"Total size processed: {self.stats.total_size_bytes / (1024*1024):.1f} MB")
         print(f"Processing time: {self.stats.processing_time_seconds:.1f} seconds")
-
-        if self.stats.total_attachments > 0:
-            success_rate = (self.stats.processed_successfully / self.stats.total_attachments) * 100
-            print(f"Success rate: {success_rate:.1f}%")
-
-        if self.stats.processing_time_seconds > 0:
-            throughput = self.stats.total_attachments / self.stats.processing_time_seconds
-            print(f"Throughput: {throughput:.1f} attachments/second")
 
 
 #: How iMessage's chat.db records the location of an attachment file.
