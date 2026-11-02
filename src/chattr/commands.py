@@ -23,6 +23,7 @@ from typing import Any, Optional, Union
 
 from chattr.config import Settings
 from chattr.records import ConversationRecord
+from chattr.transcription import Transcriber
 from chattr.database_manager import DatabaseManager, ImportCounts
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
@@ -33,6 +34,7 @@ from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
 from chattr.parsers.imessage_parser import IMessageParser
 from chattr.parsers.mbox_parser import MboxParser
 from chattr.parsers.messenger_parser import InstagramParser, MessengerParser
+from chattr.parsers.voicemail_parser import DATABASE as VOICEMAIL_DATABASE, VoicemailParser
 from chattr.parsers.whatsapp_parser import WhatsAppParser
 
 PathLike = Union[str, Path]
@@ -44,13 +46,14 @@ SERVICES: dict[str, tuple[str, Any]] = {
     "instagram": ("Instagram", InstagramParser),
     "mail": ("Mail", MboxParser),
     "googlevoice": ("Google Voice", GoogleVoiceParser),
+    "voicemail": ("Voicemail", VoicemailParser),
 }
 
 #: Services whose export is a folder, not a single file.
-FOLDER_SERVICES = {"googlevoice"}
+FOLDER_SERVICES = {"googlevoice", "voicemail"}
 
 #: Services whose parsers return one batch per conversation (and keep attachments by hash).
-BATCH_SERVICES = {"mail", "googlevoice"}
+BATCH_SERVICES = {"mail", "googlevoice", "voicemail"}
 
 #: Output folder for each service (matches preflight's `Output/` tree).
 OUTPUT_FOLDERS = {
@@ -60,6 +63,7 @@ OUTPUT_FOLDERS = {
     "imessage": "iMessage",
     "mail": "Mail",
     "googlevoice": "GoogleVoice",
+    "voicemail": "Voicemail",
 }
 
 #: Name of the HTML page for the whole central archive (Chattr's earlier name for it).
@@ -162,20 +166,29 @@ def _convert_batches(
     owner: Optional[str],
     aliases: Optional[PathLike],
     attachments_dir: Optional[PathLike],
+    transcriber: Optional[Transcriber] = None,
 ) -> ConvertResult:
-    """Import a service whose parser returns one batch per conversation (mail, Google Voice).
+    """Import a service whose parser returns one batch per conversation (mail, Google Voice,
+    voicemail).
 
     Attachments extracted from the export (mail attachments, voicemail audio) are kept by hash in
     `attachments_dir`, by default `<root>/Output/<Service>/Attachments`.
     """
     name, parser_class = SERVICES[key]
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
+    options: dict[str, Any] = {"transcriber": transcriber} if key == "voicemail" else {}
     parser = parser_class(
         owner=owner,
         aliases=_aliases_mapping(aliases),
         attachments_dir=attachments_dir or folder / "Attachments",
+        **options,
     )
-    batches = parser.parse(export)
+    try:
+        batches = parser.parse(export)
+    except FileNotFoundError as error:
+        raise CommandError(f"No {VOICEMAIL_DATABASE} found in {export}") from error
+    except sqlite3.DatabaseError as error:
+        raise CommandError(f"Can't read the {name} database in {export}: {error}") from error
     if not batches:
         raise CommandError(f"No {name} items found in {export}")
     if route == "central":
@@ -235,8 +248,11 @@ def convert(
     owner: Optional[str] = None,
     aliases: Optional[PathLike] = None,
     attachments_dir: Optional[PathLike] = None,
+    transcriber: Optional[Transcriber] = None,
 ) -> ConvertResult:
-    """Convert one WhatsApp or Messenger export along the chosen route.
+    """Convert one export along the chosen route.
+
+    `transcriber` (voicemail only) turns each voicemail's audio into a transcript locally.
 
     With `attachments_dir`, the media is also copied into that folder, renamed and dated by the
     message time (originals stay where they are).
@@ -256,7 +272,9 @@ def convert(
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
     if key in BATCH_SERVICES:
-        return _convert_batches(settings, key, export, route, html, owner, aliases, attachments_dir)
+        return _convert_batches(
+            settings, key, export, route, html, owner, aliases, attachments_dir, transcriber
+        )
     parser = parser_class()
     messages = parser.parse(str(export))
     if not messages:

@@ -29,7 +29,7 @@ def test_fresh_database_reaches_the_current_version(tmp_path: Path) -> None:
     apply_migrations(conn)
     assert TABLES <= _tables(conn)
     version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == CURRENT_VERSION == 1
+    assert version == CURRENT_VERSION == 2
 
 
 def test_migrations_are_idempotent(tmp_path: Path) -> None:
@@ -39,7 +39,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     apply_migrations(conn)
     after = conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
     assert before == after
-    assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == CURRENT_VERSION
 
 
 def test_message_columns_cover_the_data_model(tmp_path: Path) -> None:
@@ -75,3 +75,31 @@ def test_legacy_view_keeps_the_old_column_names(tmp_path: Path) -> None:
     apply_migrations(conn)
     columns = {r[1] for r in conn.execute("PRAGMA table_info(messages_view)")}
     assert {"timestamp", "message_author", "message_sender", "body", "type", "service"} <= columns
+
+
+def test_the_view_shows_a_voicemails_transcript_as_its_text(tmp_path: Path) -> None:
+    from chattr.schema import MIGRATION_1
+
+    conn = sqlite3.connect(tmp_path / "chattr.sqlite")
+    conn.execute(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    conn.executescript(MIGRATION_1)  # a database from before version 2
+    conn.execute("INSERT INTO schema_version VALUES (1, 'then')")
+    conn.execute(
+        "INSERT INTO conversations (id, service, source_id, type) VALUES ('c', 'Voicemail', 'x', 'individual')"
+    )
+    for message_id, body, transcript in (
+        ("a", "typed text", None),
+        ("b", None, "spoken words"),
+        ("c", "both", "ignored"),
+    ):
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, timestamp_utc, content_type, body, transcript, content_hash) "
+            "VALUES (?, 'c', '2024-01-01T00:00:00+00:00', 'voicemail', ?, ?, 'h')",
+            (message_id, body, transcript),
+        )
+    assert apply_migrations(conn) == CURRENT_VERSION  # upgrades in place
+    rows = dict(conn.execute("SELECT id, body FROM messages_view").fetchall())
+    assert rows == {"a": "typed text", "b": "spoken words", "c": "both"}
+    assert conn.execute("SELECT body FROM messages WHERE id = 'b'").fetchone()[0] is None

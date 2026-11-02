@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from chattr import __version__, commands
 from chattr.config import ConfigurationError, Settings, load_settings
 from chattr.preflight import run_preflight
+from chattr.transcription import Transcriber, TranscriptionUnavailable, make_transcriber
 
 
 def database_path(settings: Settings) -> Path:
@@ -38,6 +39,7 @@ IMESSAGE_ONLY = (
     "limit",
     "verbose",
 )
+VOICEMAIL_ONLY = ("transcribe", "model", "language")
 #: Options that only make sense when iMessage goes into the central archive.
 CENTRAL_ONLY_FOR_IMESSAGE = ("html", "aliases", "owner")
 
@@ -56,7 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument(
         "service",
         type=str.lower,
-        choices=["whatsapp", "messenger", "instagram", "imessage", "mail", "googlevoice"],
+        choices=[
+            "whatsapp",
+            "messenger",
+            "instagram",
+            "imessage",
+            "mail",
+            "googlevoice",
+            "voicemail",
+        ],
     )
     convert.add_argument(
         "export",
@@ -97,6 +107,13 @@ def build_parser() -> argparse.ArgumentParser:
     imessage.add_argument("--chat", type=int, help="only this chat ID (see `chats`)")
     imessage.add_argument("--limit", type=int, help="at most this many messages")
     imessage.add_argument("--verbose", action="store_true", help="print every message")
+
+    voicemail = convert.add_argument_group("voicemail options")
+    voicemail.add_argument(
+        "--transcribe", action="store_true", help="transcribe the audio locally (no network)"
+    )
+    voicemail.add_argument("--model", help="local speech-to-text model (file or folder)")
+    voicemail.add_argument("--language", help="spoken language code, such as en (default: detect)")
 
     html = sub.add_parser("html", help="render the central archive as one HTML page")
     html.add_argument("--out", help="output file (default: Output/Chattr/All_Chats_Archive.html)")
@@ -145,6 +162,9 @@ def _check_convert_options(parser: argparse.ArgumentParser, args: argparse.Names
     wrong = [flag(n) for n in IMESSAGE_ONLY if given(n)]
     if wrong:
         parser.error(f"{', '.join(wrong)} applies to iMessage only.")
+    wrong = [flag(n) for n in VOICEMAIL_ONLY if given(n)]
+    if wrong and args.service != "voicemail":
+        parser.error(f"{', '.join(wrong)} applies to voicemail only.")
     if not args.export:
         parser.error(f"convert {args.service}: give the export file to convert.")
 
@@ -171,6 +191,26 @@ def _print_imessage_result(result: commands.ConvertResult) -> None:
 def _print_chats(database: str) -> None:
     for chat_id, name in commands.list_chats(database):
         print(f"{chat_id:>5}  {name}")
+
+
+def _transcriber(settings: Settings, args: argparse.Namespace) -> Optional[Transcriber]:
+    """The local transcriber the flags and settings ask for (None: leave voicemail untranscribed)."""
+    wanted = bool(args.transcribe or args.model)
+    try:
+        transcriber = make_transcriber(
+            settings,
+            enabled=True if wanted else None,
+            model_path=args.model,
+            language=args.language,
+        )
+    except TranscriptionUnavailable as error:
+        raise commands.CommandError(str(error)) from error
+    if wanted and transcriber is None:
+        raise commands.CommandError(
+            "No speech-to-text model is set. Give --model PATH, or set "
+            "services.voicemail.preferences.transcription.model_path."
+        )
+    return transcriber
 
 
 def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
@@ -201,6 +241,9 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
             _print_imessage_result(result)
         return 0
     route = args.route or "central"
+    transcriber = None
+    if args.service == "voicemail":
+        transcriber = _transcriber(settings, args)
     result = commands.convert(
         settings,
         args.service,
@@ -210,6 +253,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
         owner=args.owner,
         aliases=args.aliases,
         attachments_dir=args.attachments_dir,
+        transcriber=transcriber,
     )
     _print_convert_result(settings, result, route)
     return 0
@@ -253,6 +297,7 @@ SERVICE_CHOICES = (
     ("imessage", "iMessage"),
     ("mail", "Mail (MBOX)"),
     ("googlevoice", "Google Voice (Takeout folder)"),
+    ("voicemail", "iPhone Voicemail (backup folder)"),
 )
 IMESSAGE_TOOLS = (
     "List chats",
@@ -328,7 +373,16 @@ def _menu_convert(settings: Settings) -> None:
     )
     route = ("central", "service")[_choose("Where should it go?", destinations, default=0)]
     html = _yes("Also write an HTML page?", default=False)
-    result = commands.convert(settings, key, export, route=route, html=html, owner=_owner())
+    transcriber = None
+    if key == "voicemail":
+        try:
+            transcriber = make_transcriber(settings)  # as the settings say; the menu doesn't ask
+        except TranscriptionUnavailable as error:
+            print(f"❌ {error}")
+            return
+    result = commands.convert(
+        settings, key, export, route=route, html=html, owner=_owner(), transcriber=transcriber
+    )
     _print_convert_result(settings, result, route)
 
 
