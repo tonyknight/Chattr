@@ -200,6 +200,7 @@ def run_preflight(root: Optional[str] = None, interactive: Optional[bool] = None
 
     chattr_root = str(resolved)
     already_complete, _ = verify_chattr_structure(chattr_root)
+    is_new = not (Path(chattr_root) / "config.json").exists()
     if not ensure_root(chattr_root):
         return None
 
@@ -210,6 +211,8 @@ def run_preflight(root: Optional[str] = None, interactive: Optional[bool] = None
         print("\n✅ Chattr initialized successfully!")
         print(f"📁 Data directory: {chattr_root}")
         print(f"⚙️  Configuration: {get_chattr_config_path()}")
+    elif is_new:
+        print(f"\n✅ Chattr initialized at: {chattr_root}")
     elif not already_complete:
         print(f"\n✅ Chattr structure repaired at: {chattr_root}")
     return chattr_root

@@ -103,3 +103,34 @@ def test_existing_pointer_is_used_when_no_root_is_given(home: Path, tmp_path: Pa
 def test_no_root_anywhere_and_not_interactive_fails_cleanly(home: Path) -> None:
     assert preflight.run_preflight(None, interactive=False) is None
     assert not (home / ".chattr.json").exists()
+
+
+def test_a_new_root_is_reported_as_initialized(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Fresh"
+    assert preflight.run_preflight(str(root), interactive=False)
+    out = capsys.readouterr().out
+    assert "initialized" in out and "repaired" not in out
+
+
+def test_a_damaged_root_is_reported_as_repaired(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Chattr"
+    assert preflight.run_preflight(str(root), interactive=False)
+    (root / "Services" / "WhatsApp.json").unlink()
+    capsys.readouterr()
+    assert preflight.run_preflight(str(root), interactive=False)
+    out = capsys.readouterr().out
+    assert "repaired" in out and "initialized" not in out
+
+
+def test_a_complete_root_is_silent(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Chattr"
+    assert preflight.run_preflight(str(root), interactive=False)
+    capsys.readouterr()
+    assert preflight.run_preflight(str(root), interactive=False)
+    assert capsys.readouterr().out == ""
