@@ -1,0 +1,13 @@
+<div class="where">{{ here }}</div>
+<ul>
+{% if parent %}<li><a href="#" hx-get="/browse?{{ {'path': parent}|urlencode }}" hx-target="#browser" hx-swap="innerHTML">⬑ Up</a></li>{% endif %}
+{% for entry in entries %}
+  {% if entry.directory %}
+  <li>📁 <a href="#" hx-get="/browse?{{ {'path': entry.path}|urlencode }}" hx-target="#browser" hx-swap="innerHTML">{{ entry.name }}</a>
+      <a href="#" data-path="{{ entry.path }}" onclick="return pick(this)" class="help" style="display:inline">(use this folder)</a></li>
+  {% else %}
+  <li>📄 <a href="#" data-path="{{ entry.path }}" onclick="return pick(this)">{{ entry.name }}</a></li>
+  {% endif %}
+{% endfor %}
+{% if not entries %}<li class="help">Nothing here.</li>{% endif %}
+</ul>

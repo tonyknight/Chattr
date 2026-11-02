@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Chattr{% endblock %}
+{% block content %}
+<h1>Turn an export into pages you can read</h1>
+<p class="lead">Choose where your messages come from. Everything happens on this computer; nothing is sent anywhere.</p>
+<ul class="cards">
+{% for service in services %}
+  <li><a class="card" href="/convert/{{ service.key }}"><b>{{ service.name }}</b><span>{{ service.blurb }}</span></a></li>
+{% endfor %}
+</ul>
+{% if outputs %}
+<h2>Your pages</h2>
+<ul>
+{% for output in outputs %}
+  <li><a href="{{ output.href }}">{{ output.label }}</a></li>
+{% endfor %}
+</ul>
+{% endif %}
+<h2>Already imported?</h2>
+<form method="post" action="/html">
+  <p class="help">Write the web pages for everything in your archive (the pages are made automatically when you leave “Make web pages” ticked).</p>
+  <button class="secondary" type="submit">Make the web pages</button>
+</form>
+{% endblock %}

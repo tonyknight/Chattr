@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ service.name }} · Chattr{% endblock %}
+{% block content %}
+<p><a href="/">← All sources</a></p>
+<h1>{{ service.name }}</h1>
+<h2>1. Export your data</h2>
+<p>{{ service.how_to_export }}</p>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="/convert/{{ service.key }}">
+  <h2>2. Point to the export</h2>
+  <label for="export">{{ service.export_label }}
+    <small>{{ service.export_help }}</small></label>
+  <input type="text" id="export" name="export" value="{{ values.export }}" {% if service.export_required %}required{% endif %} autocomplete="off">
+  <button type="button" class="secondary" hx-get="/browse" hx-target="#browser" hx-swap="innerHTML">Browse this computer…</button>
+  <div id="browser"></div>
+  <h2>3. Options</h2>
+  {% for field in fields %}
+    {% if field.kind == "checkbox" %}
+      <label class="check"><input type="checkbox" name="{{ field.name }}" value="1" {% if field.value %}checked{% endif %}>
+        <span>{{ field.label }}<small>{{ field.help }}</small></span></label>
+    {% elif field.kind == "select" %}
+      <label for="{{ field.name }}">{{ field.label }}<small>{{ field.help }}</small></label>
+      <select id="{{ field.name }}" name="{{ field.name }}">
+        {% for choice in field.choices %}
+        <option value="{{ choice.value }}" {% if choice.value == field.value %}selected{% endif %}>{{ choice.label }}</option>
+        {% endfor %}
+      </select>
+    {% else %}
+      <label for="{{ field.name }}">{{ field.label }}<small>{{ field.help }}</small></label>
+      <input type="{{ 'number' if field.kind == 'number' else 'text' }}" id="{{ field.name }}" name="{{ field.name }}" value="{{ field.value }}" {% if field.kind == 'number' %}min="1"{% endif %} autocomplete="off">
+    {% endif %}
+  {% endfor %}
+  <h2>4. Convert</h2>
+  <button type="submit">Convert</button>
+</form>
+<script>
+function pick(element) { document.getElementById("export").value = element.getAttribute("data-path"); return false; }
+</script>
+{% endblock %}

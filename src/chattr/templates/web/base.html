@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Chattr{% endblock %}</title>
+<style>
+:root { --bg:#eceff4; --fg:#2e3440; --muted:#4c566a; --card:#ffffff; --line:#d8dee9; --accent:#5e81ac; --accent-fg:#ffffff; --ok:#4c8f5a; --bad:#bf616a; }
+@media (prefers-color-scheme: dark) { :root { --bg:#2e3440; --fg:#eceff4; --muted:#a3adc2; --card:#3b4252; --line:#4c566a; --accent:#88c0d0; --accent-fg:#2e3440; --ok:#a3be8c; --bad:#ec8f98; } }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+header, main { max-width: 46rem; margin: 0 auto; padding: 0 1rem; }
+header { padding-top: 1.2rem; display:flex; justify-content:space-between; align-items:baseline; gap:1rem; flex-wrap:wrap; }
+header a.brand { font-size:1.4rem; font-weight:700; color:var(--fg); text-decoration:none; }
+header .root { color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
+main { padding-bottom: 3rem; }
+h1 { font-size:1.5rem; margin:1.2rem 0 .3rem; } h2 { font-size:1.1rem; margin:1.4rem 0 .4rem; }
+a { color: var(--accent); }
+.lead { color:var(--muted); margin-top:0; }
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(13rem,1fr)); gap:.75rem; padding:0; list-style:none; }
+.card { display:block; background:var(--card); border:1px solid var(--line); border-radius:.6rem; padding:.8rem 1rem; text-decoration:none; color:var(--fg); }
+.card:hover, .card:focus { border-color:var(--accent); }
+.card b { display:block; } .card span { color:var(--muted); font-size:.85rem; }
+form { background:var(--card); border:1px solid var(--line); border-radius:.6rem; padding:1rem; }
+label { display:block; font-weight:600; margin-top:.8rem; }
+label small, .help { display:block; font-weight:400; color:var(--muted); font-size:.85rem; }
+input[type=text], input[type=number], select { width:100%; padding:.45rem .6rem; border:1px solid var(--line); border-radius:.4rem; background:var(--bg); color:var(--fg); font:inherit; }
+.check { display:flex; gap:.5rem; align-items:flex-start; font-weight:600; margin-top:.8rem; } .check input { margin-top:.35rem; }
+button, .button { margin-top:1rem; padding:.55rem 1.1rem; border:0; border-radius:.4rem; background:var(--accent); color:var(--accent-fg); font:inherit; font-weight:600; cursor:pointer; text-decoration:none; display:inline-block; }
+button.secondary, .button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+.error { border:1px solid var(--bad); color:var(--bad); border-radius:.4rem; padding:.6rem .8rem; margin:1rem 0; background:var(--card); }
+.steps { margin:.2rem 0 1rem; padding-left:1.2rem; color:var(--muted); }
+pre.log { background:var(--card); border:1px solid var(--line); border-radius:.4rem; padding:.6rem .8rem; max-height:22rem; overflow:auto; font-size:.8rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.status { font-weight:700; } .status.done { color:var(--ok); } .status.failed { color:var(--bad); }
+#browser { margin-top:.5rem; border:1px solid var(--line); border-radius:.4rem; background:var(--bg); max-height:16rem; overflow:auto; }
+#browser ul { list-style:none; margin:0; padding:.3rem .6rem; } #browser li { padding:.1rem 0; }
+#browser .where { padding:.4rem .6rem; border-bottom:1px solid var(--line); color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
+</style>
+<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<header><a class="brand" href="/">Chattr</a><span class="root">{{ root }}</span></header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
