@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -117,7 +119,31 @@ def assign_ids(
 
 
 #: How the older parsers' `type` values map to the unified content types.
-_LEGACY_TYPES = {"text": "text", "image": "media", "video": "media", "gallery": "media"}
+_LEGACY_TYPES = {
+    "text": "text",
+    "image": "media",
+    "video": "media",
+    "gallery": "media",
+    "audio": "media",
+    "document": "media",
+    "sticker": "media",
+    "media": "media",
+    "system": "system",
+}
+
+
+def _attachment_from_parser(message: dict[str, Any]) -> tuple[AttachmentRecord, ...]:
+    """The file a legacy parser dict points to: hashed when it is on disk, else just named."""
+    path, name = message.get("attachment_path"), message.get("attachment_name")
+    if not path and not name:
+        return ()
+    name = name or Path(str(path)).name
+    mime = mimetypes.guess_type(name)[0]
+    if path and Path(path).is_file():
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        return (AttachmentRecord(digest, name, mime, Path(path).stat().st_size),)
+    # The export names a file that wasn't included: identify it by name instead.
+    return (AttachmentRecord(_digest("attachment", name), name, mime, None),)
 
 
 def records_from_parser(
@@ -126,7 +152,8 @@ def records_from_parser(
     """Convert the dicts today's WhatsApp/Messenger parsers return into MessageRecords.
 
     Those parsers give `timestamp` (naive local time), `author`, `message` and `type`, plus
-    optional `attachment_path` and `shared_link`. Naive times are marked `tz_assumed`.
+    optional `attachment_path`/`attachment_name`, `shared_link`, `precision` and `omitted`. Naive
+    times are marked `tz_assumed`; an empty message is stored as no body.
     """
     records = []
     for message in messages:
@@ -135,18 +162,22 @@ def records_from_parser(
             timestamp = datetime.fromisoformat(timestamp)
         author = message.get("author")
         extras = {
-            key: message[key] for key in ("attachment_path", "shared_link") if message.get(key)
+            key: message[key]
+            for key in ("attachment_path", "shared_link", "omitted")
+            if message.get(key)
         }
         records.append(
             MessageRecord(
                 timestamp=timestamp,
                 sender=author,
                 sender_name=author,
-                body=message.get("message"),
+                body=message.get("message") or None,
                 content_type=_LEGACY_TYPES.get(message.get("type") or "text", "text"),
                 is_from_owner=bool(owner) and author == owner,
+                time_precision=message.get("precision") or "second",
                 tz_assumed=timestamp.tzinfo is None,
                 service_specific=extras,
+                attachments=_attachment_from_parser(message),
             )
         )
     return records

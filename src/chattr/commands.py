@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -124,10 +124,14 @@ def convert(
         raise CommandError(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
     conversation = conversation_for(name, export)
+    if len({m["author"] for m in messages if m.get("author")}) > 2:
+        conversation = replace(conversation, type="group")  # more than two people are talking
 
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
-            counts = import_messages(db, settings, name, export, messages, owner=owner)
+            counts = import_messages(
+                db, settings, name, export, messages, owner=owner, conversation=conversation
+            )
             html_path = (
                 _write_conversation_html(
                     db,
@@ -143,7 +147,9 @@ def convert(
 
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
     with DatabaseManager(":memory:") as db:
-        counts = import_messages(db, None, name, export, messages, owner=owner)
+        counts = import_messages(
+            db, None, name, export, messages, owner=owner, conversation=conversation
+        )
         json_path = folder / f"{conversation.source_id}.json"
         db.export_json(name, json_path)
         html_path = (
