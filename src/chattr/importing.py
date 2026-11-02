@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 from chattr.config import Settings
 from chattr.database_manager import DatabaseManager, ImportCounts
@@ -46,7 +46,34 @@ def import_messages(
     counts = db.upsert(conversation, records_from_parser(messages, owner=owner), import_id)
     db.finish_import(import_id, counts)
     db.commit()
+    _save_state(settings, service, source, counts)
+    return counts
 
+
+def import_conversations(
+    db: DatabaseManager,
+    settings: Optional[Settings],
+    service: str,
+    source: Union[str, Path],
+    batches: Iterable[Any],
+) -> ImportCounts:
+    """Import many conversations (each a batch with `.conversation` and `.records`) as one run."""
+    import_id = db.start_import(service, source)
+    total = ImportCounts()
+    for batch in batches:
+        counts = db.upsert(batch.conversation, batch.records, import_id)
+        total.inserted += counts.inserted
+        total.updated += counts.updated
+        total.unchanged += counts.unchanged
+    db.finish_import(import_id, total)
+    db.commit()
+    _save_state(settings, service, source, total)
+    return total
+
+
+def _save_state(
+    settings: Optional[Settings], service: str, source: Union[str, Path], counts: ImportCounts
+) -> None:
     key = STATE_KEYS.get(service.lower())
     if settings is not None and key in settings.services():
         state = settings.get(f"services.{key}.state", {}) or {}
@@ -59,4 +86,3 @@ def import_messages(
                 "last_export_file": str(source),
             },
         )
-    return counts

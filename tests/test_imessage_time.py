@@ -62,6 +62,7 @@ def test_native_json_dates_are_utc(chattr_root: Path, fixture_family: FamilyExpo
         db_path=fixture_family.paths["imessage"],
         spam_mode="disabled",
         workers=1,
+        route="service",
     )
     assert result.json_path is not None
     stamps = [m["timestamp"] for m in json.loads(result.json_path.read_text(encoding="utf-8"))]

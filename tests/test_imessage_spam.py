@@ -105,7 +105,11 @@ def test_native_json_carries_the_tag_and_keeps_every_message(
     from chattr.config import Settings
 
     result = commands.convert_imessage(
-        Settings.load(chattr_root), db_path=noisy_db, spam_mode="conservative", workers=2
+        Settings.load(chattr_root),
+        db_path=noisy_db,
+        spam_mode="conservative",
+        workers=2,
+        route="service",
     )
     assert result.json_path is not None
     exported = {m["guid"]: m for m in json.loads(result.json_path.read_text(encoding="utf-8"))}

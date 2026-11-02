@@ -39,7 +39,8 @@ IMESSAGE_ONLY = (
     "verbose",
     "attachments_dir",
 )
-NOT_FOR_IMESSAGE = ("route", "html", "aliases", "owner")
+#: Options that only make sense when iMessage goes into the central archive.
+CENTRAL_ONLY_FOR_IMESSAGE = ("html", "aliases", "owner")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -121,11 +122,17 @@ def _check_convert_options(parser: argparse.ArgumentParser, args: argparse.Names
         return "--db/--json" if name == "route" else "--" + name.replace("_", "-")
 
     if args.service == "imessage":
-        wrong = [flag(n) for n in NOT_FOR_IMESSAGE if given(n)]
-        if wrong:
+        if args.route == "service":
+            wrong = [flag(n) for n in CENTRAL_ONLY_FOR_IMESSAGE if given(n)]
+            if wrong:
+                parser.error(
+                    f"{', '.join(wrong)} need the central archive; --json writes iMessage's "
+                    "native JSON only."
+                )
+        elif args.attachments_dir:
             parser.error(
-                f"{', '.join(wrong)} can't be used with iMessage yet: iMessage converts to its "
-                "native JSON in Output/iMessage/."
+                "--attachments-dir copies attachments with --json; the central archive "
+                "doesn't archive attachment files yet."
             )
         return
     wrong = [flag(n) for n in IMESSAGE_ONLY if given(n)]
@@ -161,6 +168,7 @@ def _print_chats(database: str) -> None:
 
 def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
     if args.service == "imessage":
+        route = args.route or "central"
         result = commands.convert_imessage(
             settings,
             db_path=args.export,
@@ -175,8 +183,15 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
             limit=args.limit,
             verbose=args.verbose,
             attachments_dir=args.attachments_dir,
+            route=route,
+            html=args.html,
+            owner=args.owner,
+            aliases=args.aliases,
         )
-        _print_imessage_result(result)
+        if route == "central":
+            _print_convert_result(settings, result, route)
+        else:
+            _print_imessage_result(result)
         return 0
     route = args.route or "central"
     result = commands.convert(
@@ -302,8 +317,18 @@ def _menu_convert(settings: Settings) -> None:
 
 def _menu_convert_imessage(settings: Settings) -> None:
     db_path = _ask_path("Path to the iMessage database", _configured_chat_db(settings))
-    print("iMessage converts to its native JSON in Output/iMessage/.")
-    options: dict = {}
+    if not db_path or not Path(db_path).is_file():
+        print(f"❌ iMessage database not found: {db_path or '(none given)'}")
+        return
+    destinations = (
+        "The central archive (Database/chattr.sqlite)",
+        "iMessage's native JSON (Output/iMessage/)",
+    )
+    route = ("central", "service")[_choose("Where should it go?", destinations, default=0)]
+    options: dict = {"route": route}
+    if route == "central":
+        options["html"] = _yes("Also write an HTML page for each conversation?", default=False)
+        options["owner"] = _owner()
     if not _yes("Use default settings?", default=True):
         modes = commands.SPAM_MODES
         configured = settings.get("services.imessage.preferences.spam_filtering.mode")
@@ -320,7 +345,11 @@ def _menu_convert_imessage(settings: Settings) -> None:
         options["contacts"] = _ask_path("VCF contacts file (Enter for none)", contacts) or None
         options["chat"] = _number("Only this chat ID (Enter for all; see iMessage tools)")
         options["limit"] = _number("At most this many messages (Enter for all)")
-    _print_imessage_result(commands.convert_imessage(settings, db_path=db_path, **options))
+    result = commands.convert_imessage(settings, db_path=db_path, **options)
+    if route == "central":
+        _print_convert_result(settings, result, route)
+    else:
+        _print_imessage_result(result)
 
 
 def _menu_html(settings: Settings) -> None:

@@ -100,7 +100,11 @@ def test_bulk_loading_scales_past_sqlite_variable_limits(tmp_path: Path, fixture
 
 def _json(chattr_root: Path, db_path: Path) -> dict[str, dict]:
     result = commands.convert_imessage(
-        Settings.load(chattr_root), db_path=db_path, spam_mode="disabled", workers=1
+        Settings.load(chattr_root),
+        db_path=db_path,
+        spam_mode="disabled",
+        workers=1,
+        route="service",
     )
     assert result.json_path is not None
     data = json.loads(result.json_path.read_text(encoding="utf-8"))

@@ -24,8 +24,9 @@ from chattr.config import Settings
 from chattr.database_manager import DatabaseManager, ImportCounts
 from chattr.html_generator import HTMLGenerator
 from chattr.imessage_export import export_to_json, print_message_summary
-from chattr.importing import conversation_for, import_messages
+from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
+from chattr.parsers.imessage_parser import IMessageParser
 from chattr.parsers.messenger_parser import MessengerParser
 from chattr.parsers.whatsapp_parser import WhatsAppParser
 
@@ -80,12 +81,7 @@ def _apply_aliases(messages: list[dict[str, Any]], aliases: Optional[PathLike]) 
     """Rename senders using a JSON file of {identifier or name: person name}."""
     if not aliases:
         return
-    try:
-        mapping = json.loads(Path(aliases).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise CommandError(f"Can't read the aliases file {aliases}: {error}") from error
-    if not isinstance(mapping, dict):
-        raise CommandError(f"The aliases file must contain a JSON object: {aliases}")
+    mapping = _aliases_mapping(aliases)
     for message in messages:
         author = message.get("author")
         if author in mapping:
@@ -213,6 +209,18 @@ def _open_imessage(
         raise CommandError(f"Can't read the iMessage database {db_path}: {error}") from error
 
 
+def _aliases_mapping(aliases: Optional[PathLike]) -> dict[str, str]:
+    if not aliases:
+        return {}
+    try:
+        mapping = json.loads(Path(aliases).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CommandError(f"Can't read the aliases file {aliases}: {error}") from error
+    if not isinstance(mapping, dict):
+        raise CommandError(f"The aliases file must contain a JSON object: {aliases}")
+    return {str(key): str(value) for key, value in mapping.items()}
+
+
 def convert_imessage(
     settings: Settings,
     db_path: Optional[PathLike] = None,
@@ -228,14 +236,32 @@ def convert_imessage(
     limit: Optional[int] = None,
     verbose: bool = False,
     attachments_dir: Optional[PathLike] = None,
+    route: str = "central",
+    html: bool = False,
+    owner: Optional[str] = None,
+    aliases: Optional[PathLike] = None,
 ) -> ConvertResult:
-    """Export an iMessage database (`chat.db`) to iMessage's native JSON in `Output/iMessage/`.
+    """Convert an iMessage database (`chat.db`) along the chosen route.
+
+    - "central" (default): import every conversation into the central archive, once per message
+      GUID, so running it again adds only what's new. `html` also writes a page per conversation.
+    - "service": write iMessage's native JSON to `Output/iMessage/`; `attachments_dir` also
+      copies attachments into an archive folder (the unified attachment pipeline is ticket 13).
 
     Unset options come from `services.imessage.preferences` (contacts and phone region from
-    `global.contacts`). Archival copies of attachments
-    are written only when `attachments_dir` is given. Import into the central archive comes
-    later (ticket 07).
+    `global.contacts`).
     """
+    if route not in ("central", "service"):
+        raise CommandError("Route must be 'central' or 'service'.")
+    if route == "service" and (html or owner or aliases):
+        raise CommandError(
+            "HTML, owner and aliases need the central archive; the native JSON route has none."
+        )
+    if route == "central" and attachments_dir:
+        raise CommandError(
+            "Archival attachment copies are made with the JSON route until the unified "
+            "attachment pipeline is built."
+        )
     db_path = db_path or settings.get_expanded_path(
         "services.imessage.preferences.database.default_db_path"
     )
@@ -256,6 +282,28 @@ def convert_imessage(
     )
     if not db_path:
         raise CommandError("No iMessage database given and none configured.")
+    db_path = Path(db_path).expanduser()
+
+    if route == "central":
+        return _import_imessage(
+            settings,
+            db_path,
+            IMessageParser(
+                contacts=contacts,
+                region=str(region),
+                attachment_root=attachment_root or None,
+                spam_mode=str(spam_mode),
+                workers=workers,
+                batch_size=batch_size,
+                chat=chat,
+                limit=limit,
+                owner=owner,
+                aliases=_aliases_mapping(aliases),
+            ),
+            html,
+            verbose,
+        )
+
     out_path = (
         Path(out) if out else output_folder(settings, OUTPUT_FOLDERS["imessage"]) / IMESSAGE_EXPORT
     )
@@ -291,6 +339,43 @@ def convert_imessage(
         parser.close()
     counts = ImportCounts(inserted=len(messages))
     return ConvertResult("iMessage", counts, json_path=out_path)
+
+
+def _import_imessage(
+    settings: Settings, db_path: Path, parser: IMessageParser, html: bool, verbose: bool = False
+) -> ConvertResult:
+    if not db_path.is_file():
+        raise CommandError(f"iMessage database not found: {db_path}")
+    try:
+        batches = parser.parse(db_path)
+    except PermissionError as error:  # the reader's message explains macOS Full Disk Access
+        raise CommandError(str(error)) from error
+    except sqlite3.DatabaseError as error:
+        raise CommandError(f"Can't read the iMessage database {db_path}: {error}") from error
+    if not batches:
+        raise CommandError(f"No messages found in {db_path}")
+    stats = parser.spam_stats
+    if stats and stats.get("total_suppressed"):
+        print(f"Spam filtering flagged {stats['total_suppressed']:,} messages (kept, tagged).")
+    if verbose:
+        for batch in batches:
+            name = batch.conversation.name or batch.conversation.source_id
+            print(f"  {name}: {len(batch.records):,} messages")
+    html_path = None
+    with DatabaseManager(central_database(settings)) as db:
+        counts = import_conversations(db, settings, "iMessage", db_path, batches)
+        if html:
+            folder = output_folder(settings, "Chattr")
+            for batch in batches:
+                page = _write_conversation_html(
+                    db,
+                    batch.conversation.id,
+                    batch.conversation.name or batch.conversation.source_id,
+                    folder,
+                    parser.owner,
+                )
+                html_path = html_path or page
+    return ConvertResult("iMessage", counts, html_path=html_path)
 
 
 def list_chats(db_path: PathLike) -> list[tuple[int, str]]:

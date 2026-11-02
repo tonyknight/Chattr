@@ -100,6 +100,7 @@ def test_convert_imessage_with_the_restored_flags(
         "--spam-mode",
         "disabled",
         "--verbose",
+        "--json",
         "--attachments-dir",
         str(chattr_root / "Archived attachments"),
     )
@@ -110,10 +111,26 @@ def test_convert_imessage_with_the_restored_flags(
     assert "11 messages" in capsys.readouterr().out
 
 
+def test_convert_imessage_imports_into_the_archive_by_default(
+    chattr_root: Path, fixture_family: FamilyExports, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _chat_db(fixture_family)
+    flags = ["--spam-mode", "disabled", "--workers", "1", "--verbose", "--html"]
+    assert _run(chattr_root, "convert", "imessage", db, "--owner", family.OWNER.name, *flags) == 0
+    out = capsys.readouterr().out
+    assert "7 new" in out and f"{family.GROUP_NAME}: 2 messages" in out
+    assert _archived(chattr_root) == 7
+    assert len(list((chattr_root / "Output" / "Chattr").glob("*.html"))) == 3
+    assert not (chattr_root / "Output" / "iMessage" / "imessage_export.json").exists()
+    assert _run(chattr_root, "convert", "imessage", db, "--spam-mode", "disabled") == 0
+    assert "0 new" in capsys.readouterr().out and _archived(chattr_root) == 7
+
+
 def test_convert_imessage_limit_and_chat(chattr_root: Path, fixture_family: FamilyExports) -> None:
     db = _chat_db(fixture_family)
     (group_id,) = [i for i, name in cli.commands.list_chats(db) if name == family.GROUP_NAME]
-    code = _run(chattr_root, "convert", "imessage", db, "--chat", str(group_id), "--limit", "2")
+    args = ["convert", "imessage", db, "--json", "--chat", str(group_id), "--limit", "2"]
+    code = _run(chattr_root, *args)
     assert code == 0
     export = chattr_root / "Output" / "iMessage" / "imessage_export.json"
     assert len(json.loads(export.read_text(encoding="utf-8"))) == 2
@@ -122,8 +139,10 @@ def test_convert_imessage_limit_and_chat(chattr_root: Path, fixture_family: Fami
 @pytest.mark.parametrize(
     "extra",
     [
-        ["imessage", "chat.db", "--db"],
-        ["imessage", "chat.db", "--html"],
+        ["imessage", "chat.db", "--json", "--html"],
+        ["imessage", "chat.db", "--json", "--owner", "Maria"],
+        ["imessage", "chat.db", "--json", "--aliases", "aliases.json"],
+        ["imessage", "chat.db", "--attachments-dir", "Archive"],
         ["whatsapp", "_chat.txt", "--region", "US"],
         ["whatsapp", "_chat.txt", "--contacts", "people.vcf"],
         ["whatsapp"],

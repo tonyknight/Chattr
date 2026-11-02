@@ -89,10 +89,11 @@ def test_imessage_with_default_settings_matches_the_subcommand(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = _chat_db(fixture_family)
-    assert _menu(chattr_root, monkeypatch, ["1", "3", db, "", EXIT]) == 0
+    # Convert → iMessage → database → central archive (default) → no HTML → no owner → defaults
+    assert _menu(chattr_root, monkeypatch, ["1", "3", db, "", "", "", "", EXIT]) == 0
     second = _second_root(tmp_path)
     assert cli.main(["--root", str(second), "convert", "imessage", db]) == 0
-    assert len(_imessage_export(chattr_root)) == len(_imessage_export(second)) > 0
+    assert _rows(chattr_root) == _rows(second) and len(_rows(chattr_root)) == 7
 
 
 def test_imessage_with_custom_settings_matches_the_subcommand(
@@ -103,11 +104,11 @@ def test_imessage_with_custom_settings_matches_the_subcommand(
 ) -> None:
     db = _chat_db(fixture_family)
     (group,) = [str(i) for i, name in commands.list_chats(db) if name == family.GROUP_NAME]
-    # custom settings: spam mode 3 (disabled), 1 worker, no contacts, the group chat, 2 messages
-    answers = ["1", "3", db, "n", "3", "1", "", group, "2", EXIT]
+    # JSON route; custom: spam mode 3 (disabled), 1 worker, no contacts, the group chat, 2 messages
+    answers = ["1", "3", db, "2", "n", "3", "1", "", group, "2", EXIT]
     assert _menu(chattr_root, monkeypatch, answers) == 0
     second = _second_root(tmp_path)
-    args = ["convert", "imessage", db, "--spam-mode", "disabled", "--workers", "1"]
+    args = ["convert", "imessage", db, "--json", "--spam-mode", "disabled", "--workers", "1"]
     assert cli.main(["--root", str(second), *args, "--chat", group, "--limit", "2"]) == 0
     menu, subcommand = _imessage_export(chattr_root), _imessage_export(second)
     assert len(menu) == len(subcommand) == 2
@@ -150,7 +151,7 @@ def test_command_errors_are_reported_and_the_menu_continues(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     missing_export = ["1", "1", str(tmp_path / "missing.txt")]  # checked before more questions
-    missing_database = ["1", "3", str(tmp_path / "missing.db"), ""]  # raised by the command
+    missing_database = ["1", "3", str(tmp_path / "missing.db")]  # checked before more questions
     assert _menu(chattr_root, monkeypatch, [*missing_export, *missing_database, EXIT]) == 0
     out = capsys.readouterr().out
     assert "Export file not found" in out and "iMessage database not found" in out

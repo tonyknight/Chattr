@@ -26,6 +26,7 @@ def test_convert_imessage_writes_native_json(
         attachment_workers=1,
         workers=1,
         spam_mode="disabled",
+        route="service",
     )
     assert result.json_path == chattr_root / "Output" / "iMessage" / "imessage_export.json"
     data = json.loads(result.json_path.read_text(encoding="utf-8"))
@@ -61,6 +62,7 @@ def test_attachments_are_archived_when_a_folder_is_given(
         attachment_root=db_path.parent / "Attachments",
         attachment_workers=1,
         attachments_dir=archive,
+        route="service",
     )
     archived = [p for p in archive.rglob("*") if p.is_file()]
     sources = [p for p in (db_path.parent / "Attachments").rglob("*") if p.is_file()]

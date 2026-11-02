@@ -273,6 +273,8 @@ class Tapback:
     action: str  # "Added" or "Removed"
     target_message_guid: str
     component_index: int
+    sender_id: Optional[str] = None  # the sender's raw handle (phone or email); None for "Me"
+    timestamp: Optional[datetime] = None
 
 
 def parse_associated_guid(value: Optional[str]) -> Optional[Tuple[str, int]]:
@@ -315,6 +317,22 @@ def message_parts(text: Optional[str], attachment_count: int) -> List[Optional[i
     return parts + list(range(attachment_count))
 
 
+_KIND_NAMES = {
+    "Love": "Loved",
+    "Like": "Liked",
+    "Dislike": "Disliked",
+    "Laugh": "Laughed",
+    "Emphasis": "Emphasized",
+    "Question": "Questioned",
+}
+
+
+def tapback_kind(type_name: str) -> str:
+    """The kind of reaction, the same for adding and removing it ("Removed Love" → "Loved")."""
+    name = type_name.removeprefix("Removed").strip()
+    return _KIND_NAMES.get(name, name)
+
+
 def net_tapbacks(tapbacks: List["Tapback"]) -> List["Tapback"]:
     """The tapbacks still standing: a later removal cancels the same sender's earlier tapback.
 
@@ -322,11 +340,7 @@ def net_tapbacks(tapbacks: List["Tapback"]) -> List["Tapback"]:
     """
     standing: Dict[Tuple[str, str, int], "Tapback"] = {}
     for tapback in tapbacks:
-        kind = tapback.type.replace("Removed ", "").replace("Removed", "").strip()
-        kind = {"Love": "Loved", "Like": "Liked", "Dislike": "Disliked", "Laugh": "Laughed"}.get(
-            kind, {"Emphasis": "Emphasized", "Question": "Questioned"}.get(kind, kind)
-        )
-        key = (tapback.sender, kind, tapback.component_index)
+        key = (tapback.sender, tapback_kind(tapback.type), tapback.component_index)
         if tapback.action == "Added":
             standing[key] = tapback
         else:
@@ -426,6 +440,7 @@ class iMessageDatabaseParser:
         # Cache handles and chats for lookups
         self.handles = self._load_handles()
         self.chats = self._load_chats()  # Keep simple version for backward compatibility
+        self.chat_guids = self._load_chat_guids()
         self.enhanced_chats = self._load_enhanced_chats()  # New enhanced version with participants
 
         # Count group vs individual chats
@@ -540,6 +555,12 @@ class iMessageDatabaseParser:
             name = row["display_name"] or row["chat_identifier"]
             chats[row["rowid"]] = name
         return chats
+
+    def _load_chat_guids(self) -> Dict[int, str]:
+        """Load each chat's GUID (service-qualified, e.g. `iMessage;-;+15550100`)"""
+        return {
+            row["rowid"]: row["guid"] for row in self.conn.execute("SELECT rowid, guid FROM chat")
+        }
 
     def _load_chat_participants(self) -> Dict[int, List[str]]:
         """Load chat participants from chat_handle_join table"""
@@ -1120,7 +1141,8 @@ class iMessageDatabaseParser:
         limit on large databases). `only_guid` narrows it to one target.
         """
         query = """
-        SELECT m.associated_message_guid, m.associated_message_type, m.handle_id, m.is_from_me
+        SELECT m.associated_message_guid, m.associated_message_type, m.handle_id, m.is_from_me,
+               m.date
         FROM message m
         WHERE m.associated_message_type >= 2000 AND m.associated_message_type < 4000
         """
@@ -1143,6 +1165,8 @@ class iMessageDatabaseParser:
                     action="Removed" if row[1] >= 3000 else "Added",
                     target_message_guid=guid,
                     component_index=part,
+                    sender_id=None if row[3] else self.handles.get(row[2]),
+                    timestamp=apple_time.to_utc(row[4]),
                 )
             )
         return by_target
@@ -1153,7 +1177,7 @@ class iMessageDatabaseParser:
 
     def is_tapback_message(self, message: Message) -> bool:
         """Check if a message is a tapback"""
-        return 2000 <= message.item_type <= 3007
+        return 2000 <= (message.associated_message_type or 0) <= 3007
 
     def is_url_message(self, message: Message) -> bool:
         """Check if a message contains a URL preview"""

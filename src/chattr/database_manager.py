@@ -238,6 +238,8 @@ class DatabaseManager:
                         attachment.storage_path,
                     ),
                 )
+            if record.reactions:  # the import is the truth: replace, so re-imports never duplicate
+                db.execute("DELETE FROM reactions WHERE message_id = ?", (record.id,))
             for reaction in record.reactions:
                 reactor = (
                     self._handle_id(service, reaction.sender, None) if reaction.sender else None
