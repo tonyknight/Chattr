@@ -285,5 +285,31 @@ class DatabaseManager:
             "SELECT * FROM messages_view WHERE message_author = ? ORDER BY timestamp", (author,)
         ).fetchall()
 
+    def export_json(self, service: str, path: Union[str, Path]) -> int:
+        """Write every stored message of `service` to a JSON file; return how many."""
+        rows = self._db.execute(
+            "SELECT m.id, c.source_id AS conversation, c.type AS conversation_type, "
+            "m.timestamp_utc, m.tz_offset_minutes, m.time_precision, m.tz_assumed, "
+            "h.identifier AS sender, h.display_name AS sender_name, m.is_from_owner, "
+            "m.content_type, m.body, m.transcript, m.mail_headers, m.service_specific "
+            "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+            "LEFT JOIN handles h ON h.id = m.sender_handle_id "
+            "WHERE c.service = ? ORDER BY m.timestamp_utc, m.id",
+            (service,),
+        ).fetchall()
+        messages = []
+        for row in rows:
+            item = dict(row)
+            item["is_from_owner"] = bool(item["is_from_owner"])
+            item["tz_assumed"] = bool(item["tz_assumed"])
+            for key in ("mail_headers", "service_specific"):
+                item[key] = json.loads(item[key]) if item[key] else {}
+            messages.append(item)
+        document = {"service": service, "schema_version": 1, "messages": messages}
+        Path(path).write_text(
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return len(messages)
+
     def get_all_authors(self) -> list[sqlite3.Row]:
         return self._db.execute("SELECT DISTINCT message_author FROM messages_view").fetchall()
