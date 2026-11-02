@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -12,7 +13,7 @@ from chattr.parsers.whatsapp_parser import WhatsAppParser
 from chattr.parsers.messenger_parser import MessengerParser
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser, Message, Attachment, Tapback
 from chattr.attachment_manager import AttachmentManager, create_attachment_info_from_message_attachment
-from chattr.config import get_config, ConfigurationError
+from chattr.config import ConfigurationError, Settings, get_config, load_settings
 from chattr.preflight import run_preflight
 from chattr import __version__
 
@@ -312,9 +313,9 @@ def imessage_quick_process(config):
     print("\n--- Quick iMessage Processing ---")
 
     # Get configuration defaults
-    db_path = config.get_expanded_path("services.imessage.database.default_db_path")
-    spam_mode = config.get("services.imessage.spam_filtering.mode", "aggressive")
-    max_workers = config.get("services.imessage.performance.workers", 4)
+    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
+    spam_mode = config.get("services.imessage.preferences.spam_filtering.mode", "aggressive")
+    max_workers = config.get("services.imessage.preferences.performance.workers", 4)
 
     print(f"Database: {db_path}")
     print(f"Spam filtering: {spam_mode}")
@@ -379,7 +380,7 @@ def imessage_advanced_options(config):
     print("\n--- Advanced iMessage Options ---")
 
     # Database path
-    default_db_path = config.get_expanded_path("imessage.database.default_db_path")
+    default_db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
     db_path = input(f"Database path (default: {default_db_path}): ").strip()
     if not db_path:
         db_path = default_db_path
@@ -405,7 +406,7 @@ def imessage_advanced_options(config):
         aggressive_spam_filtering = True
 
     # Performance settings
-    max_workers = int(input(f"Number of workers (default: {config.get('services.imessage.performance.workers', 4)}): ").strip() or config.get('services.imessage.performance.workers', 4))
+    max_workers = int(input(f"Number of workers (default: {config.get('services.imessage.preferences.performance.workers', 4)}): ").strip() or config.get('services.imessage.preferences.performance.workers', 4))
 
     # Chat filter
     chat_filter = input("Filter by specific chat ID (optional): ").strip()
@@ -424,7 +425,7 @@ def imessage_advanced_options(config):
     # Attachment processing
     process_attachments = input("Process attachments? (y/n, default: n): ").strip().lower() == 'y'
     attachments_dir = None
-    source_attachments_dir = config.get_expanded_path("imessage.database.default_attachments_path")
+    source_attachments_dir = config.get_expanded_path("services.imessage.preferences.database.default_attachments_path")
 
     if process_attachments:
         attachments_dir = input(f"Attachments output directory (default: ./Attachments): ").strip() or "./Attachments"
@@ -493,7 +494,7 @@ def imessage_list_chats(config):
     """List available iMessage chats"""
     print("\n--- Available iMessage Chats ---")
 
-    db_path = config.get_expanded_path("imessage.database.default_db_path")
+    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
 
     try:
         db = iMessageDatabaseParser(db_path=db_path)
@@ -531,7 +532,7 @@ def imessage_diagnostics(config):
 
 def imessage_database_info(config):
     """Show iMessage database information"""
-    db_path = config.get_expanded_path("imessage.database.default_db_path")
+    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
 
     try:
         print(f"\nDatabase path: {db_path}")
@@ -564,7 +565,7 @@ def imessage_database_info(config):
 
 def imessage_test_connection(config):
     """Test iMessage database connection"""
-    db_path = config.get_expanded_path("imessage.database.default_db_path")
+    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
 
     try:
         print(f"Testing connection to: {db_path}")
@@ -592,7 +593,7 @@ def imessage_test_connection(config):
 
 def imessage_spam_analysis(config):
     """Analyze spam filtering effectiveness"""
-    db_path = config.get_expanded_path("imessage.database.default_db_path")
+    db_path = config.get_expanded_path("services.imessage.preferences.database.default_db_path")
 
     try:
         print("Analyzing spam filtering effectiveness...")
@@ -647,6 +648,11 @@ def generate_html_submenu(db_manager):
     else:
         print("No messages found in the database to generate a report.")
 
+def database_path(settings: Settings) -> Path:
+    """The central database for this Chattr root: `<root>/Database/chattr.sqlite`."""
+    return Path(settings.root) / "Database" / "chattr.sqlite"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chattr-cli", description="Convert message exports into readable archives.")
     parser.add_argument("--version", action="version", version=f"chattr {__version__}")
@@ -659,31 +665,30 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     load_dotenv("API_Key.env")
 
-    # Run preflight check - ensures Chattr directory structure exists
-    chattr_root = run_preflight()
+    # Run preflight check - ensures the Chattr root exists (never prompts with --root)
+    chattr_root = run_preflight(args.root)
 
     if not chattr_root:
         print("\n❌ Failed to initialize Chattr. Exiting.")
-        return
+        return 1
 
     # Log successful preflight (silent if structure already existed)
     import logging
     logging.basicConfig(level=logging.INFO)
     logging.info(f"Chattr initialized at: {chattr_root}")
 
-    # Load configuration
+    # Load configuration from the Chattr root
     try:
-        config = get_config()
-        output_dir = config.get_expanded_path("global.output_directory", "./output")
-        os.makedirs(output_dir, exist_ok=True)
+        config = load_settings(chattr_root)
     except ConfigurationError as e:
         print(f"Configuration error: {e}")
-        print("Using default settings...")
-        output_dir = "./output"
-        os.makedirs(output_dir, exist_ok=True)
+        return 1
+    output_dir = config.get_expanded_path("global.general.output_directory")
+    os.makedirs(output_dir, exist_ok=True)
 
-    db_path = os.path.join(output_dir, "chat_archive.db")
-    db_manager = DatabaseManager(db_path=db_path)
+    db_path = database_path(config)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_manager = DatabaseManager(db_path=str(db_path))
 
     # Ensure tables are created once at the start
     with db_manager:
@@ -702,7 +707,7 @@ def main(argv=None):
             generate_html_submenu(db_manager)
         elif choice == '5':
             print("Exiting.")
-            break
+            return 0
         else:
             print("Invalid choice. Please try again.")
         
