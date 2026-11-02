@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
 from chattr.parsers.base_parser import BaseParser
+from chattr.parsers.batch import ConversationBatch
 from chattr.parsers.imessage_database_parser import (
     Attachment,
     Message,
@@ -40,11 +40,7 @@ ORPHAN_CHAT = "(no chat)"
 
 PathLike = Union[str, Path]
 
-
-@dataclass
-class ConversationBatch:
-    conversation: ConversationRecord
-    records: list[MessageRecord] = field(default_factory=list)
+__all__ = ["ConversationBatch", "IMessageParser"]
 
 
 def _hash_file(path: Path) -> Optional[str]:
