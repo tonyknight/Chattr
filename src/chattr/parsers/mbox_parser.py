@@ -20,6 +20,7 @@ import email
 import email.policy
 import hashlib
 import mailbox
+import mimetypes
 import re
 from datetime import datetime, timezone
 from email.message import EmailMessage, MIMEPart
@@ -28,9 +29,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from chattr import blobs
 from chattr.parsers.base_parser import BaseParser
 from chattr.parsers.batch import ConversationBatch
-from chattr.records import ConversationRecord, MessageRecord
+from chattr.records import AttachmentRecord, ConversationRecord, MessageRecord
 
 SERVICE = "Mail"
 PathLike = Union[str, Path]
@@ -107,12 +109,41 @@ def _body(part: Optional[MIMEPart]) -> Optional[str]:
         return payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else ""
 
 
+_PREFIX = re.compile(r"^\s*(?:re|fwd?|aw|sv|vs|res|rv|enc)\s*:\s*", re.IGNORECASE)
+
+
+def _strip_prefixes(subject: str) -> str:
+    """`Re: Fwd: Dinner?` → `Dinner?`"""
+    previous = None
+    while previous != subject:
+        previous, subject = subject, _PREFIX.sub("", subject)
+    return subject.strip()
+
+
+def _attachment_parts(message: EmailMessage) -> list[MIMEPart]:
+    """The parts of a mail that are files (nested multiparts included), not its body."""
+    parts: list[MIMEPart] = []
+    for part in message.iter_attachments():
+        if part.is_multipart() and part.get_content_type() != "message/rfc822":
+            parts.extend(_attachment_parts(part))
+        else:
+            parts.append(part)
+    return parts
+
+
 class MboxParser(BaseParser):
     """Parse an MBOX file into conversations of mail."""
 
-    def __init__(self, owner: Optional[str] = None, aliases: Optional[dict[str, str]] = None):
+    def __init__(
+        self,
+        owner: Optional[str] = None,
+        aliases: Optional[dict[str, str]] = None,
+        attachments_dir: Optional[PathLike] = None,
+    ):
         self.owner = (owner or "").strip().lower()
         self.aliases = aliases or {}
+        #: Where attachments are kept, by hash. Without it they are hashed but not saved.
+        self.attachments_dir = Path(attachments_dir) if attachments_dir else None
 
     # --- BaseParser -------------------------------------------------------------------------
 
@@ -133,11 +164,62 @@ class MboxParser(BaseParser):
                 )
         finally:
             box.close()
-        ordered = sorted(records.values(), key=lambda r: r.timestamp)
-        if not ordered:
-            return []
-        conversation = ConversationRecord(service=SERVICE, source_id=path.name, name=path.stem)
-        return [ConversationBatch(conversation, ordered)]
+        return self._threads(sorted(records.values(), key=lambda r: r.timestamp))
+
+    # --- Threads ----------------------------------------------------------------------------
+
+    @staticmethod
+    def _thread_key(record: MessageRecord, known: dict[str, MessageRecord]) -> str:
+        """The thread a mail belongs to.
+
+        Gmail's own thread id when the mail has one. Otherwise the root of its
+        References/In-Reply-To chain: `References` starts at the thread's first mail, and the root
+        stays the same even if that mail isn't in the file. A chain through known mails is
+        followed to its top (cycles stop it).
+        """
+        headers = record.mail_headers
+        if headers.get("thread_id"):
+            return f"gmail:{headers['thread_id']}"
+        references = headers.get("references") or []
+        key = references[0] if references else (headers.get("in_reply_to") or record.source_id)
+        seen: set[str] = set()
+        while key in known and key not in seen:
+            seen.add(key)
+            parent_headers = known[key].mail_headers
+            parent_refs = parent_headers.get("references") or []
+            parent = parent_refs[0] if parent_refs else parent_headers.get("in_reply_to")
+            if not parent or parent == key:
+                break
+            key = parent
+        return f"msgid:{key}"
+
+    def _threads(self, records: list[MessageRecord]) -> list[ConversationBatch]:
+        known = {r.source_id: r for r in records if r.source_id}
+        grouped: dict[str, list[MessageRecord]] = {}
+        for record in records:
+            grouped.setdefault(self._thread_key(record, known), []).append(record)
+        batches = []
+        for key, members in grouped.items():
+            people: dict[str, None] = {}
+            for member in members:
+                for address in [member.sender or ""] + [
+                    p["address"]
+                    for field in ("to", "cc")
+                    for p in member.mail_headers.get(field, [])
+                ]:
+                    if address:
+                        people.setdefault(address, None)
+            subject = _strip_prefixes(members[0].mail_headers.get("subject") or "")
+            conversation = ConversationRecord(
+                service=SERVICE,
+                source_id=key,
+                type="group" if len(people) > 2 else "individual",
+                name=subject or "(no subject)",
+                participants=tuple(people),
+                service_specific={"thread": key},
+            )
+            batches.append(ConversationBatch(conversation, members))
+        return sorted(batches, key=lambda b: b.records[0].timestamp)
 
     # --- One mail ---------------------------------------------------------------------------
 
@@ -169,6 +251,7 @@ class MboxParser(BaseParser):
         html = _body(message.get_body(preferencelist=("html",)))
         text = (plain if plain is not None else html_to_text(html or "")).strip()
         extras: dict[str, Any] = {"body_html": html} if html else {}
+        attachments = tuple(self._attachments(message))
         source_id = message_id or self._synthetic_id(sender, timestamp, subject, text)
         headers["message_id"] = message_id
         return MessageRecord(
@@ -183,7 +266,34 @@ class MboxParser(BaseParser):
             reply_to=in_reply_to,
             mail_headers=headers,
             service_specific=extras,
+            attachments=attachments,
         )
+
+    def _attachments(self, message: EmailMessage) -> list[AttachmentRecord]:
+        """Every file the mail carries (attachments, inline files, forwarded mails), by hash."""
+        records = []
+        for index, part in enumerate(_attachment_parts(message), start=1):
+            if part.get_content_type() == "message/rfc822":
+                inner = part.get_payload(0)
+                data = inner.as_bytes() if hasattr(inner, "as_bytes") else b""
+            else:
+                payload = part.get_payload(decode=True)
+                data = payload if isinstance(payload, bytes) else b""
+            if not data:
+                continue
+            mime = part.get_content_type()
+            name = part.get_filename()
+            if not name:
+                extension = mimetypes.guess_extension(mime) or ".bin"
+                name = f"attachment-{index}{extension}"
+            if self.attachments_dir:
+                digest, relative = blobs.store_by_hash(
+                    self.attachments_dir, data, Path(name).suffix
+                )
+            else:
+                digest, relative = hashlib.sha256(data).hexdigest(), None
+            records.append(AttachmentRecord(digest, name, mime, len(data), relative))
+        return records
 
     @staticmethod
     def _time(message: EmailMessage, from_line: Optional[str]) -> tuple[datetime, bool]:
