@@ -113,6 +113,7 @@ def full_archive(
         aliases = base / "aliases.json"  # linking the Instagram username is a human's job
         aliases.write_text(json.dumps({family.RUI.usernames["instagram"]: family.RUI.name}))
         commands.people(settings, aliases=aliases)
+        patch.undo()  # HOME was isolated only for building; tests must not inherit it
         yield FullArchive(root, settings, commands.central_database(settings), media)
     finally:
         patch.undo()
