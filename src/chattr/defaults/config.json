@@ -5,43 +5,37 @@
     "last_updated": "2025-11-11",
     "schema_notes": "Global settings only - service-specific configs are in Services/ folder"
   },
-
   "global": {
     "general": {
       "output_directory": "{CHATTR_ROOT}/Output",
       "temp_directory": "{CHATTR_ROOT}/temp",
       "log_level": "INFO"
     },
-
     "owner": {
       "name": "",
       "identifiers": []
     },
-
     "contacts": {
       "vcf_file_path": "",
       "phone_region": "US",
       "enable_contact_resolution": true,
       "normalize_phone_numbers": true
     },
-
     "performance": {
       "max_workers": 4,
       "batch_size": 1000,
       "enable_parallel_processing": true,
       "memory_limit_mb": null
     },
-
     "ai_translation": {
       "enabled": false,
-      "provider": "openrouter",
-      "api_key_env_var": "OPENROUTER_API_KEY",
-      "model": "anthropic/claude-3-haiku",
-      "max_requests_per_minute": 60,
-      "timeout_seconds": 30,
-      "fallback_on_error": true
+      "endpoint": "http://localhost:11434/v1",
+      "model": "",
+      "target_language": "English",
+      "api_key_env_var": "CHATTR_TRANSLATION_API_KEY",
+      "allow_remote": false,
+      "timeout_seconds": 60
     },
-
     "database": {
       "unified_schema": {
         "enabled": false,
@@ -56,4 +50,3 @@
     }
   }
 }
-
