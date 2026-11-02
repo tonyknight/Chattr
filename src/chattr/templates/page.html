@@ -17,6 +17,7 @@
 {% if e.transcript %}<blockquote class="transcript">{{ e.transcript | nl2br }}</blockquote>{% endif %}
 {% endif %}
 {% if e.kind not in ('call', 'voicemail') and e.body %}<div class="body">{{ e.body | nl2br }}</div>{% endif %}
+{% if e.translation %}<div class="translation">{{ e.translation | nl2br }}</div>{% endif %}
 {% for a in e.attachments %}<div class="attachment">{% if a.href and a.kind == 'image' %}<a href="{{ a.href }}"><img src="{{ a.href }}" alt="{{ a.name }}" loading="lazy"></a>{% elif a.href and a.kind == 'video' %}<video controls preload="none"><source src="{{ a.href }}"></video>{% elif a.href and a.kind == 'audio' %}<audio controls preload="none">
 <source src="{{ a.href }}">
 </audio>{% elif a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>

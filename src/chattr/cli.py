@@ -5,6 +5,7 @@ Both call the same functions in `chattr.commands`, so anything the menu does can
     chattr-cli [--root DIR] convert <service> [export] [--db | --json] [--html] ...
     chattr-cli [--root DIR] html [--out DIR] [--attachments-dir DIR]
     chattr-cli [--root DIR] people [--contacts F] [--aliases F] [--owner NAME] [--json]
+    chattr-cli [--root DIR] translate [--endpoint URL] [--model NAME] [--service S] [--limit N]
     chattr-cli [--root DIR] rebuild [--from DIR] [--db FILE]
     chattr-cli [--root DIR] chats [chat.db]
     chattr-cli [--root DIR] doctor [chat.db] [--check info|connection|spam]
@@ -137,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
     people.add_argument("--region", help="phone number region for contacts (default: US)")
     people.add_argument("--json", action="store_true", help="print the unresolved handles as JSON")
 
+    translate = sub.add_parser(
+        "translate", help="translate non-English messages in the archive, locally (a separate step)"
+    )
+    translate.add_argument("--endpoint", help="OpenAI-compatible server (default: localhost)")
+    translate.add_argument("--model", help="the model to ask (this turns translation on)")
+    translate.add_argument("--service", help="only this service, such as WhatsApp")
+    translate.add_argument("--limit", type=int, help="at most this many translations this run")
+
     rebuild = sub.add_parser(
         "rebuild", help="recreate chattr.sqlite from the rendered pages (their data islands)"
     )
@@ -154,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=commands.DOCTOR_CHECKS,
         help="run only this check (repeatable; default: all)",
     )
-    for command in (convert, html, people, rebuild, chats, doctor):
+    for command in (convert, html, people, translate, rebuild, chats, doctor):
         # `--root` works before or after the command; SUPPRESS keeps an earlier value.
         command.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
@@ -326,6 +335,31 @@ def _run_people(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_translate(settings: Settings, args: argparse.Namespace) -> int:
+    stats = commands.translate(
+        settings,
+        endpoint=args.endpoint,
+        model=args.model,
+        service=args.service,
+        limit=args.limit,
+    )
+    if stats is None or not (
+        stats.translated or stats.already_translated or stats.failed or stats.skipped_english
+    ):
+        print("Nothing to translate.")
+        return 0
+    print(
+        f"{stats.translated} translated ({stats.tokens_in} tokens in, {stats.tokens_out} out); "
+        f"{stats.already_translated} already done, {stats.skipped_english} English, "
+        f"{stats.skipped_by_author} already translated by their author, "
+        f"{stats.skipped_unknown} too short or unknown, {stats.failed} failed."
+    )
+    if stats.aborted:
+        print(f"Stopped early: {stats.errors[-1]}")
+        return 1
+    return 0
+
+
 def _run_rebuild(settings: Settings, args: argparse.Namespace) -> int:
     result = commands.rebuild(settings, site=args.site, db_path=args.db)
     print(
@@ -355,6 +389,7 @@ SUBCOMMANDS = {
     "convert": _run_convert,
     "html": _run_html,
     "people": _run_people,
+    "translate": _run_translate,
     "rebuild": _run_rebuild,
     "chats": _run_chats,
     "doctor": _run_doctor,

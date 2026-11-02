@@ -25,12 +25,13 @@ import os
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlparse
 
 from chattr.config import Settings
+from chattr.database_manager import DatabaseManager
 
 #: Distinctive common words per language. A message is judged by how many of its words appear.
 _STOPWORDS: dict[str, set[str]] = {
@@ -260,3 +261,116 @@ def make_translator(
         api_key=key or None,
         timeout=float(settings.get(f"{prefix}.timeout_seconds", 60) or 60),
     )
+
+
+# --- Translating an archive ------------------------------------------------------------------
+
+
+class Translator(Protocol):
+    def translate(self, text: str) -> Translation: ...
+
+
+@dataclass
+class TranslationStats:
+    translated: int = 0
+    already_translated: int = 0
+    skipped_english: int = 0
+    skipped_by_author: int = 0  # the author wrote the translation themselves
+    skipped_unknown: int = 0  # too short or not a language the detector knows
+    failed: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    aborted: bool = False  # stopped early because the server could not be reached
+    errors: list[str] = field(default_factory=list)
+
+
+#: After this many failures in a row (with nothing translated since) the run stops.
+MAX_CONSECUTIVE_FAILURES = 5
+
+
+def translate_archive(
+    db: DatabaseManager,
+    translator: Translator,
+    service: Optional[str] = None,
+    limit: Optional[int] = None,
+    progress: Optional[Callable[[TranslationStats], None]] = None,
+) -> TranslationStats:
+    """Translate, in place, the messages that need it; returns what happened.
+
+    Safe to repeat and to interrupt: a message with a translation is left alone. One failed message
+    never stops the others, but a server that can't be reached stops the run after a few tries.
+    `limit` caps how many translations this run makes.
+    """
+    conn = db.connection
+    stats = TranslationStats()
+    query = (
+        "SELECT m.id, m.conversation_id, m.timestamp_utc, m.sender_handle_id, m.body, "
+        "m.content_type, m.translation, m.language FROM messages m "
+        "JOIN conversations c ON c.id = m.conversation_id "
+        + ("WHERE c.service = ? " if service else "")
+        + "ORDER BY m.conversation_id, m.timestamp_utc, m.id"
+    )
+    rows = conn.execute(query, (service,) if service else ()).fetchall()
+    consecutive = 0
+    start = 0
+    while start < len(rows):
+        end = start
+        while end < len(rows) and rows[end]["conversation_id"] == rows[start]["conversation_id"]:
+            end += 1
+        chat = rows[start:end]
+        start = end
+        candidates = [
+            Candidate(
+                datetime.fromisoformat(r["timestamp_utc"]),
+                str(r["sender_handle_id"]) if r["sender_handle_id"] else None,
+                r["body"],
+                r["content_type"],
+            )
+            for r in chat
+        ]
+        for index, row in enumerate(chat):
+            candidate = candidates[index]
+            if candidate.kind != "text" or not (candidate.text or "").strip():
+                continue
+            if row["translation"]:
+                stats.already_translated += 1
+                continue
+            language = detect_language(candidate.text)
+            if language and not row["language"]:
+                conn.execute("UPDATE messages SET language = ? WHERE id = ?", (language, row["id"]))
+            if language is None:
+                stats.skipped_unknown += 1
+                continue
+            if language == "en":
+                stats.skipped_english += 1
+                continue
+            if not needs_translation(candidates, index):
+                stats.skipped_by_author += 1
+                continue
+            if limit is not None and stats.translated >= limit:
+                conn.commit()
+                return stats
+            try:
+                result = translator.translate(candidate.text or "")
+            except TranslationError as error:
+                stats.failed += 1
+                stats.errors.append(str(error))
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    stats.aborted = True
+                    conn.commit()
+                    return stats
+                continue
+            consecutive = 0
+            conn.execute(
+                "UPDATE messages SET translation = ?, language = ? WHERE id = ?",
+                (result.text, language, row["id"]),
+            )
+            stats.translated += 1
+            stats.tokens_in += result.tokens_in
+            stats.tokens_out += result.tokens_out
+            if progress:
+                progress(stats)
+        conn.commit()
+    conn.commit()
+    return stats

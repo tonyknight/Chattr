@@ -186,6 +186,7 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
         "time": _time_text(message),
         "offset": _offset_text(message),
         "body": message["body"],
+        "translation": message["translation"],
         "transcript": message["transcript"],
         "call_label": call_label,
         "duration": _duration(specific.get("duration_seconds")),

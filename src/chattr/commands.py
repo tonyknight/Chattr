@@ -28,6 +28,13 @@ from chattr.render import Renderer
 from chattr.rebuild import RebuildError, RebuildResult, rebuild_database
 from chattr.records import ConversationRecord
 from chattr.transcription import Transcriber
+from chattr.translation import (
+    TranslationStats,
+    TranslationUnavailable,
+    Translator,
+    make_translator,
+    translate_archive,
+)
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
@@ -422,6 +429,37 @@ def rebuild(
     except RebuildError as error:
         raise CommandError(str(error)) from error
     return result
+
+
+def translate(
+    settings: Settings,
+    endpoint: Optional[str] = None,
+    model: Optional[str] = None,
+    service: Optional[str] = None,
+    limit: Optional[int] = None,
+    translator: Optional[Translator] = None,
+) -> Optional[TranslationStats]:
+    """Translate the central archive in place (see `chattr.translation`).
+
+    Returns None when the archive doesn't exist yet. `translator` is for tests; otherwise it is
+    built from the settings and the arguments (`model` turns translation on).
+    """
+    if translator is None:
+        try:
+            translator = make_translator(
+                settings, endpoint=endpoint, model=model, enabled=True if model else None
+            )
+        except TranslationUnavailable as error:
+            raise CommandError(str(error)) from error
+        if translator is None:
+            raise CommandError(
+                "Translation is off. Give --model NAME (and --endpoint URL), or set "
+                "global.ai_translation.enabled and .model in the settings."
+            )
+    if not central_database(settings).exists():
+        return None
+    with DatabaseManager(central_database(settings)) as db:
+        return translate_archive(db, translator, service=service, limit=limit)
 
 
 def _print_spam_stats(parser: iMessageDatabaseParser) -> None:
