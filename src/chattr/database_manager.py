@@ -280,6 +280,13 @@ class DatabaseManager:
         """Every message, oldest first, with the legacy column names (see `messages_view`)."""
         return self._db.execute("SELECT * FROM messages_view ORDER BY timestamp").fetchall()
 
+    def get_messages_for_conversation(self, conversation_id: str) -> list[sqlite3.Row]:
+        """One conversation's messages, oldest first, with the legacy column names."""
+        return self._db.execute(
+            "SELECT * FROM messages_view WHERE conversation_id = ? ORDER BY timestamp",
+            (conversation_id,),
+        ).fetchall()
+
     def get_all_messages_by_author(self, author: str) -> list[sqlite3.Row]:
         return self._db.execute(
             "SELECT * FROM messages_view WHERE message_author = ? ORDER BY timestamp", (author,)

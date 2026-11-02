@@ -22,3 +22,17 @@ from fixtures import FamilyExports, build_all  # noqa: E402  (needs the path abo
 def fixture_family(tmp_path_factory: pytest.TempPathFactory) -> FamilyExports:
     """Every synthetic export, built once per test session."""
     return build_all(tmp_path_factory.mktemp("family"))
+
+
+@pytest.fixture
+def chattr_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fresh Chattr root, with HOME isolated so the real ~/.chattr.json is never touched."""
+    from chattr import preflight
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CHATTR_ROOT", raising=False)
+    root = tmp_path / "Chattr"
+    assert preflight.run_preflight(str(root), interactive=False)
+    return root
