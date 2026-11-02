@@ -160,8 +160,7 @@ def copy_default_configs(chatter_root: str) -> bool:
     """
     try:
         # Get the script's directory (repository root)
-        script_dir = Path(__file__).parent.parent
-        defaults_dir = script_dir / "Defaults"
+        defaults_dir = Path(__file__).resolve().parent / "defaults"
         
         if not defaults_dir.exists():
             print(f"❌ Error: Defaults directory not found at {defaults_dir}")

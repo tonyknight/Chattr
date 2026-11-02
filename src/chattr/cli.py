@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 from datetime import datetime
@@ -5,14 +6,15 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
 # Import the new classes
-from src.database_manager import DatabaseManager
-from src.html_generator import HTMLGenerator
-from src.parsers.whatsapp_parser import WhatsAppParser
-from src.parsers.messenger_parser import MessengerParser
-from src.parsers.imessage_database_parser import iMessageDatabaseParser, Message, Attachment, Tapback
-from src.attachment_manager import AttachmentManager, create_attachment_info_from_message_attachment
-from src.config import get_config, ConfigurationError
-from src.preflight import run_preflight
+from chattr.database_manager import DatabaseManager
+from chattr.html_generator import HTMLGenerator
+from chattr.parsers.whatsapp_parser import WhatsAppParser
+from chattr.parsers.messenger_parser import MessengerParser
+from chattr.parsers.imessage_database_parser import iMessageDatabaseParser, Message, Attachment, Tapback
+from chattr.attachment_manager import AttachmentManager, create_attachment_info_from_message_attachment
+from chattr.config import get_config, ConfigurationError
+from chattr.preflight import run_preflight
+from chattr import __version__
 
 
 # iMessage operational functions migrated from imessage_main.py
@@ -645,8 +647,16 @@ def generate_html_submenu(db_manager):
     else:
         print("No messages found in the database to generate a report.")
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="chattr-cli", description="Convert message exports into readable archives.")
+    parser.add_argument("--version", action="version", version=f"chattr {__version__}")
+    parser.add_argument("--root", help="Chattr data folder (skips the first-run prompt)")
+    return parser
+
+
+def main(argv=None):
     """Main function to orchestrate the chat export processing."""
+    args = build_parser().parse_args(argv)
     load_dotenv("API_Key.env")
 
     # Run preflight check - ensures Chatter directory structure exists
@@ -700,4 +710,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    raise SystemExit(main())
+

@@ -1,10 +1,13 @@
+from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader
 import os
 import datetime
 
 class HTMLGenerator:
     """Handles the generation of the final HTML report."""
-    def __init__(self, template_dir="templates"):
+    def __init__(self, template_dir=None):
+        template_dir = template_dir or str(Path(__file__).resolve().parent / "templates")
         self.env = Environment(loader=FileSystemLoader(template_dir))
         self.template = self.env.get_template("template.html")
 

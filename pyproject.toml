@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chattr"
+version = "2.0.0"
+description = "Convert message exports (iMessage, WhatsApp, Messenger, email, Google Voice, voicemail) into readable, durable archives."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Tony Knight" }]
+dependencies = [
+    "jinja2>=3.0.0",
+    "vobject>=0.9.6.1",
+    "phonenumbers>=8.13.0",
+    "tqdm>=4.64.0",
+    "python-dotenv>=0.19.0",
+    "Pillow>=9.0.0",
+    "pillow-heif>=0.10.0",
+    "ffmpeg-python>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "black>=24.0", "mypy>=1.10"]
+
+[project.scripts]
+chattr-cli = "chattr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chattr = ["templates/*.html", "defaults/*.json", "defaults/Services/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --import-mode=importlib"

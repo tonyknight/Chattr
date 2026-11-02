@@ -1,6 +1,6 @@
 import json
 import datetime
-from src.parsers.base_parser import BaseParser
+from chattr.parsers.base_parser import BaseParser
 
 def _fix_facebook_encoding(text):
     """Fixes the double-encoded strings from Facebook's JSON export."""

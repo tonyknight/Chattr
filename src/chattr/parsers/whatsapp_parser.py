@@ -1,6 +1,6 @@
 import re
 import datetime
-from src.parsers.base_parser import BaseParser
+from chattr.parsers.base_parser import BaseParser
 
 class WhatsAppParser(BaseParser):
     """Parses exported WhatsApp chat .txt files."""

@@ -19,11 +19,9 @@ jinja2>=3.0.0
 
 # Language Detection
 # Used for automatic translation features and language-aware processing
-langdetect>=1.0.9
 
 # HTTP Requests
 # Used for API calls (OpenRouter AI translation, etc.)
-requests>=2.28.0
 
 # Contact Management Dependencies
 # These enable VCF (vCard) file parsing and phone number normalization
@@ -33,7 +31,6 @@ phonenumbers>=8.13.0
 
 # HTML Parsing
 # Used for parsing Facebook Messenger and legacy iMessage HTML exports
-beautifulsoup4>=4.11.0
 
 # Performance and UI Dependencies
 # These enable parallel processing and progress indicators
