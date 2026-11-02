@@ -1,3 +1,7 @@
+> **Developed in [Caixa](https://github.com/tonyknight/caixa).** This repository is a mirror of the
+> `tools/chattr/` folder there: its history is published from Caixa as a fast-forward. Please send
+> changes, issues and pull requests to Caixa, not here.
+
 # 💬 Chattr
 
 Chattr converts message exports into readable, durable archives. It reads the export formats of
