@@ -4,6 +4,25 @@ from jinja2 import Environment, FileSystemLoader
 import os
 import datetime
 
+def to_view(row):
+    """A template-ready dict from a database row (sqlite3.Row) or a parser message dict.
+
+    Database rows name the sender `message_sender` and the text `body`; the template uses
+    `author` and `message`. Rows are read-only, so a new dict is built.
+    """
+    data = dict(row)
+    timestamp = data.get("timestamp")
+    if isinstance(timestamp, str):
+        timestamp = datetime.datetime.fromisoformat(timestamp)
+    return {
+        **data,
+        "timestamp": timestamp,
+        "author": data.get("message_sender") or data.get("author") or data.get("message_author"),
+        "message": data.get("body") if data.get("body") is not None else data.get("message", ""),
+        "type": data.get("type") or "text",
+    }
+
+
 class HTMLGenerator:
     """Handles the generation of the final HTML report."""
     def __init__(self, template_dir=None):
@@ -26,12 +45,9 @@ class HTMLGenerator:
 
         # Simplified data preparation for now. Will be expanded.
         # This part will need to be made more robust to handle the full calendar, etc.
+        messages = [to_view(m) for m in messages]
         messages_by_date = {}
         for msg in messages:
-            # Ensure timestamp is a datetime object
-            if isinstance(msg['timestamp'], str):
-                msg['timestamp'] = datetime.datetime.fromisoformat(msg['timestamp'])
-
             date = msg["timestamp"].date()
             if date not in messages_by_date:
                 messages_by_date[date] = []
@@ -42,11 +58,11 @@ class HTMLGenerator:
         calendar_data = [] # Placeholder
         if not main_author and messages:
             # A simple heuristic to find the main author for non-iMessage chats
-             try:
-                all_authors = list(dict.fromkeys([m["message_sender"] for m in messages]))
+            all_authors = list(dict.fromkeys(m["author"] for m in messages if m["author"]))
+            if not all_authors:
+                main_author = "Me"
+            else:
                 main_author = all_authors[1] if len(all_authors) > 1 else all_authors[0]
-             except:
-                 main_author = "Me"
 
 
         html_content = self.template.render(
