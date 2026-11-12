@@ -3,7 +3,7 @@
 {% block content %}
 <header>
 <h1>{{ title }}</h1>
-<nav class="years">{% for y in years %}<a class="year{% if y.current %} current{% endif %}" href="{{ y.href }}">{{ y.year }}</a>{% endfor %}</nav>
+<nav class="years"><a class="year home" href="{{ home }}">All years</a>{% for y in years %}<a class="year{% if y.current %} current{% endif %}" href="{{ y.href }}">{{ y.year }}</a>{% endfor %}</nav>
 </header>
 <section class="calendar" id="calendar">
 {% for month in months %}<div class="month"><div class="month-name">{{ month.name }}</div><div class="grid">{% for cell in month.cells %}{% if cell.day == 0 %}<span class="d"></span>{% elif cell.count %}<a href="#date-{{ cell.date }}" class="d l{{ cell.level }}" title="{{ cell.count }} message{{ '' if cell.count == 1 else 's' }}">{{ cell.day }}</a>{% else %}<span class="d">{{ cell.day }}</span>{% endif %}{% endfor %}</div></div>
@@ -19,8 +19,9 @@
 {% if e.kind not in ('call', 'voicemail') and e.body %}<div class="body">{{ e.body | nl2br }}</div>{% endif %}
 {% if e.translation %}<div class="translation">{{ e.translation | nl2br }}</div>{% endif %}
 {% for a in e.attachments %}<div class="attachment">{% if a.href and a.kind == 'image' %}<a href="{{ a.href }}"><img src="{{ a.href }}" alt="{{ a.name }}" loading="lazy"></a>{% elif a.href and a.kind == 'video' %}<video controls preload="none"><source src="{{ a.href }}"></video>{% elif a.href and a.kind == 'audio' %}<audio controls preload="none">
-<source src="{{ a.href }}">
-</audio>{% elif a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>
+{% if a.playable %}<source src="{{ a.playable }}" type="audio/mp4">
+{% endif %}<source src="{{ a.href }}">
+</audio>{% if a.playable %}<div class="note"><a href="{{ a.href }}">Original recording ({{ a.format }})</a></div>{% elif a.needs_copy %}<div class="note">This recording is in a format most browsers cannot play ({{ a.format }}). <a href="{{ a.href }}">Open the file</a> in an audio player.</div>{% endif %}{% elif a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>
 {% endfor %}{% if e.link %}<a class="link-preview" href="{{ e.link.href }}" rel="noopener noreferrer">{{ e.link.text }}</a>{% elif e.link_text %}<span class="link-preview">{{ e.link_text }}</span>{% endif %}
 {% if e.reactions %}<div class="reactions">{% for r in e.reactions %}<span>{{ r.label }} · {{ r.who }}</span>{% endfor %}</div>{% endif %}
 </article>

@@ -2,8 +2,10 @@
 
 Pages are organized for people, not platforms (see the Requirements):
 
-    Messages/<Person>/(YYYY) <Person>.html           every platform, one page per year
-    Messages/Groups/<Group>/(YYYY) <Group>.html
+    People/<Person>/index.html                       everything from this person, by year and source
+    People/<Person>/(YYYY) <Person>.html             every platform, one page per year
+    People/<Person>/<Service>/…                      the files each source brought (see `filing`)
+    Groups/<Group>/index.html, (YYYY) <Group>.html, <Service>/…
     Mail/<YYYY>/(YYYY-MM-DD) <sender> — <subject>.html     one page per mail thread
 
 A conversation belongs to its *counterpart*: the non-owner person behind its handles, or the handle
@@ -29,6 +31,8 @@ from chattr.database_manager import DatabaseManager
 
 SCHEMA = "chattr-page-1"
 MAIL_SERVICE = "Mail"
+PEOPLE = "People"
+GROUPS = "Groups"
 _CHAT_PREFIXES = ("WhatsApp Chat with ", "WhatsApp Chat - ")
 
 
@@ -101,6 +105,16 @@ class Renderer:
             if message["is_from_owner"] and message["sender_handle_id"]:
                 self.owner_handles.add(message["sender_handle_id"])
         self.pages: list[PageSpec] = self._plan()
+        #: The page each message is on (so its files can be put beside it).
+        self.page_of: dict[str, PageSpec] = {
+            message_id: spec for spec in self.pages for message_id in spec.message_ids
+        }
+
+    def label(self, handle_id: Optional[int]) -> str:
+        """The name to show for a handle: the person, else what the source called it."""
+        if not handle_id:
+            return "Me"
+        return _handle_label(self.handles[handle_id])
 
     # --- Planning ---------------------------------------------------------------------------
 
@@ -134,7 +148,7 @@ class Renderer:
             )
             kind = "group" if group else "person"
             folder_name = safe_name(title, "Unknown")
-            folder = f"Messages/Groups/{folder_name}" if group else f"Messages/{folder_name}"
+            folder = f"{GROUPS}/{folder_name}" if group else f"{PEOPLE}/{folder_name}"
             for message in messages:
                 year = message["local"].year
                 key = (kind, folder, year)
@@ -272,4 +286,4 @@ def _loads(value: Optional[str]) -> Any:
     return json.loads(value) if value else {}
 
 
-__all__ = ["PageSpec", "Renderer", "local_moment", "SCHEMA"]
+__all__ = ["GROUPS", "PEOPLE", "PageSpec", "Renderer", "local_moment", "SCHEMA"]

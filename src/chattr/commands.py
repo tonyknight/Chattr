@@ -19,7 +19,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence, Union
+from typing import Any, Callable, Iterable, Optional, Sequence, Union
 
 from chattr.config import Settings
 from chattr.pages import render_pages
@@ -36,6 +36,7 @@ from chattr.translation import (
     translate_archive,
 )
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
+from chattr.filing import Filed, file_attachments
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
@@ -414,6 +415,45 @@ def convert(
     )
 
 
+@dataclass
+class Published:
+    """What drawing the archive did: the index page, the pages written, the files filed."""
+
+    index: Path
+    pages: list[Path]
+    filed: Filed
+
+
+def publish(
+    settings: Settings,
+    out: Optional[PathLike] = None,
+    attachments_dirs: Sequence[PathLike] = (),
+    pages_list: Optional[PathLike] = None,
+    make_playable: bool = True,
+    progress: Optional[Callable[[int, int], None]] = None,
+    before_pages: Optional[Callable[[], None]] = None,
+) -> Optional[Published]:
+    """File every attachment beside the person it came from, then draw every page.
+
+    Attachments found in `attachments_dirs` (and Chattr's usual folders) are moved under `out`,
+    named for their date and sender (see `chattr.filing`); audio a browser cannot play gets a copy
+    it can. Returns None when the archive is empty.
+    """
+    if not central_database(settings).exists():
+        return None
+    folder = Path(out) if out else output_folder(settings, "Chattr")
+    roots = attachment_roots(settings, attachments_dirs)
+    with DatabaseManager(central_database(settings)) as db:
+        renderer = Renderer(db)
+        if not renderer.pages:
+            return None
+        filed = file_attachments(db, renderer, folder, roots, make_playable, progress)
+        if before_pages:
+            before_pages()  # filing is done; the pages come next
+        pages = render_pages(renderer, folder, roots, pages_list)
+    return Published(folder / "index.html", pages, filed)
+
+
 def generate_html(
     settings: Settings,
     out: Optional[PathLike] = None,
@@ -421,17 +461,11 @@ def generate_html(
 ) -> Optional[Path]:
     """Render the whole central archive as pages (see `chattr.render`); returns the index page.
 
-    Returns None when the archive is empty. `attachments_dirs` are extra folders to link
-    attachment files from, besides the usual ones.
+    Returns None when the archive is empty. `attachments_dirs` are extra folders attachment files
+    may be waiting in, besides the usual ones; they are filed under the pages (see `publish`).
     """
-    if not central_database(settings).exists():
-        return None
-    with DatabaseManager(central_database(settings)) as db:
-        return _render_db(
-            db,
-            Path(out) if out else output_folder(settings, "Chattr"),
-            attachment_roots(settings, attachments_dirs),
-        )
+    published = publish(settings, out, attachments_dirs)
+    return published.index if published else None
 
 
 def rebuild(

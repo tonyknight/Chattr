@@ -177,8 +177,8 @@ def test_html_is_written_per_conversation(chattr_root: Path, fixture_family: Fam
     site = chattr_root / "Output" / "Chattr"
     assert result.html_path == site / "index.html"
     pages = sorted(p.relative_to(site).as_posix() for p in site.rglob("(*) *.html"))
-    assert f"Messages/Groups/{family.GROUP_NAME}/(2024) {family.GROUP_NAME}.html" in pages
-    assert any(p.startswith("Messages/+15550101/") for p in pages)  # Ana, no contacts given
+    assert f"Groups/{family.GROUP_NAME}/(2024) {family.GROUP_NAME}.html" in pages
+    assert any(p.startswith("People/+15550101/") for p in pages)  # Ana, no contacts given
 
 
 def test_unknown_route_is_a_command_error(chattr_root: Path, fixture_family: FamilyExports) -> None:

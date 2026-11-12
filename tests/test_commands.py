@@ -73,7 +73,7 @@ def test_html_is_written_as_pages_per_person_per_year(
     )
     site = chattr_root / "Output" / "Chattr"
     assert result.html_path == site / "index.html"
-    page = site / "Messages" / family.ANA.name / f"(2024) {family.ANA.name}.html"
+    page = site / "People" / family.ANA.name / f"(2024) {family.ANA.name}.html"
     assert "Que lindo! Buy two." in page.read_text(encoding="utf-8")
     assert commands.generate_html(settings) == site / "index.html"
 

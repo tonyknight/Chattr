@@ -1,5 +1,7 @@
 """Render the planned pages as self-contained HTML.
 
+Every person and group also gets an `index.html`: all that came from them, by year and by source.
+
 Each page is one HTML file: inline CSS (light and dark), a heatmap calendar of the year, a block per
 date, an entry per message with a platform badge, a stable `id="m-<id>"` anchor, the sender, and
 the local time with its offset (or "UTC" / "zone unknown") at the stored precision. Text is always
@@ -22,7 +24,8 @@ from urllib.parse import quote, urlparse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup, escape
 
-from chattr.render import PageSpec, Renderer
+from chattr.filing import playable_copy
+from chattr.render import GROUPS, PEOPLE, PageSpec, Renderer
 
 PathLike = Union[str, Path]
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -105,19 +108,34 @@ class _Site:
     def __init__(self, renderer: Renderer, out_root: Path, attachment_roots: Iterable[PathLike]):
         self.renderer = renderer
         self.out_root = out_root
-        self.roots = [Path(r).resolve() for r in attachment_roots]
+        # the output folder first: filed attachments are recorded relative to it
+        self.roots = [out_root.resolve(), *(Path(r).resolve() for r in attachment_roots)]
         self.env = _environment()
 
-    def href(self, storage_path: Optional[str], page_dir: Path) -> Optional[str]:
-        """A relative link to an archived file, only if it exists inside one of the roots."""
+    def _file(self, storage_path: Optional[str]) -> Optional[Path]:
         if not storage_path:
             return None
         for root in self.roots:
             candidate = (root / storage_path).resolve()
             if candidate.is_file() and candidate.is_relative_to(root):
-                relative = os.path.relpath(candidate, page_dir.resolve()).replace(os.sep, "/")
-                return quote(relative, safe="/()")
+                return candidate
         return None
+
+    @staticmethod
+    def _link(file: Path, page_dir: Path) -> str:
+        relative = os.path.relpath(file, page_dir.resolve()).replace(os.sep, "/")
+        return quote(relative, safe="/()")
+
+    def playable(self, storage_path: Optional[str], page_dir: Path) -> Optional[str]:
+        """A link to the browser-playable copy of an audio file, when one has been made."""
+        file = self._file(storage_path)
+        copy = playable_copy(file) if file else None
+        return self._link(copy, page_dir) if copy and copy.is_file() else None
+
+    def href(self, storage_path: Optional[str], page_dir: Path) -> Optional[str]:
+        """A relative link to an archived file, only if it exists inside one of the roots."""
+        file = self._file(storage_path)
+        return self._link(file, page_dir) if file else None
 
     def label(self, handle_id: Optional[int]) -> str:
         if not handle_id:
@@ -198,7 +216,12 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
                 or (a["storage_path"] or "").rsplit("/", 1)[-1]
                 or "file",
                 "href": site.href(a["storage_path"], page_dir),
-                "kind": _attachment_kind(a["mime_type"], a["original_filename"] or ""),
+                "kind": _attachment_kind(
+                    a["mime_type"], a["original_filename"] or a["storage_path"] or ""
+                ),
+                "playable": site.playable(a["storage_path"], page_dir),
+                "format": Path(a["storage_path"] or a["original_filename"] or "").suffix.lower(),
+                "needs_copy": playable_copy(Path(a["storage_path"] or "x")) is not None,
             }
             for a in site.renderer.attachments.get(message["id"], [])
         ],
@@ -250,6 +273,7 @@ def _message_page(site: _Site, spec: PageSpec) -> str:
         title=spec.title,
         year=spec.year,
         years=years,
+        home="index.html",
         months=_calendar(spec.year, counts),
         days=list(days.values()),
         island=Markup(island_json(renderer.document(spec))),
@@ -325,7 +349,12 @@ def _index(site: _Site) -> str:
             )
         else:
             entry = sections[page.kind]["by_folder"].setdefault(
-                page.folder, {"title": page.title, "links": []}
+                page.folder,
+                {
+                    "title": page.title,
+                    "home": quote(f"{page.folder}/index.html", safe="/()"),
+                    "links": [],
+                },
             )
             entry["links"].append(link)
     ordered = []
@@ -338,12 +367,154 @@ def _index(site: _Site) -> str:
     return site.env.get_template("index.html").render(sections=ordered)
 
 
+def _plural(count: int, word: str) -> str:
+    return f"{count:,} {word}" if count == 1 else f"{count:,} {word}s"
+
+
+def _folder_indexes(site: _Site) -> dict[str, str]:
+    """An `index.html` for every person and group: all that came from them, by year and source.
+
+    A person's page also lists the groups they are in and the mail they sent; a group's lists its
+    members. Returned as {path relative to the output folder: the page}.
+    """
+    renderer = site.renderer
+    folders: dict[str, list[PageSpec]] = {}
+    for spec in renderer.pages:
+        if spec.kind in ("person", "group"):
+            folders.setdefault(spec.folder, []).append(spec)
+    homes = {
+        specs[0].title: folder for folder, specs in folders.items() if specs[0].kind == "person"
+    }
+
+    def members(spec: PageSpec) -> set[str]:
+        handles: set[int] = set()
+        for conversation_id in spec.conversation_ids:
+            handles |= set(renderer.participants.get(conversation_id, []))
+        handles |= {
+            renderer.messages[m]["sender_handle_id"]
+            for m in spec.message_ids
+            if renderer.messages[m]["sender_handle_id"]
+        }
+        return {renderer.label(h) for h in handles if h not in renderer.owner_handles}
+
+    # Who is in what, worked out once (not once per person: an archive can hold thousands).
+    groups_of: dict[str, dict[str, str]] = {}  # person → {group folder: group title}
+    members_of: dict[str, set[str]] = {}  # group folder → its people
+    mail_of: dict[str, list[PageSpec]] = {}  # person → mail threads they are in
+    for spec in renderer.pages:
+        if spec.kind == "group":
+            names = members(spec)
+            members_of.setdefault(spec.folder, set()).update(names)
+            for name in names:
+                groups_of.setdefault(name, {})[spec.folder] = spec.title
+        elif spec.kind == "mail":
+            for name in members(spec):
+                mail_of.setdefault(name, []).append(spec)
+
+    pages = {}
+    for folder, specs in folders.items():
+        first = specs[0]
+        up = "../" * (folder.count("/") + 1)
+        services: dict[str, int] = {}
+        years: list[dict[str, Any]] = []
+        moments = []
+        for spec in sorted(specs, key=lambda s: s.year):
+            by_service: dict[str, int] = {}
+            for message_id in spec.message_ids:
+                message = renderer.messages[message_id]
+                by_service[message["service"]] = by_service.get(message["service"], 0) + 1
+                moments.append(message["local"])
+            for service, count in by_service.items():
+                services[service] = services.get(service, 0) + count
+            years.append(
+                {
+                    "year": spec.year,
+                    "href": quote(spec.filename, safe="()"),
+                    "count": len(spec.message_ids),
+                    "sources": [
+                        {"name": name, "slug": _slug(name), "count": count}
+                        for name, count in sorted(by_service.items())
+                    ],
+                }
+            )
+        related: list[dict[str, Optional[str]]] = []
+        mail = []
+        if first.kind == "person":
+            for other_folder, title in sorted(groups_of.get(first.title, {}).items()):
+                href = quote(f"{up}{other_folder}/index.html", safe="/().")
+                related.append({"title": title, "href": href})
+            for spec in mail_of.get(first.title, []):
+                mail.append(
+                    {
+                        "title": spec.filename.removesuffix(".html"),
+                        "href": quote(f"{up}{spec.path}", safe="/()."),
+                    }
+                )
+        else:
+            for name in sorted(members_of.get(folder, set()), key=str.casefold):
+                home = homes.get(name)
+                member = quote(f"{up}{home}/index.html", safe="/().") if home else None
+                related.append({"title": name, "href": member})
+        total = sum(int(year["count"]) for year in years)
+        pages[f"{folder}/index.html"] = site.env.get_template("person.html").render(
+            title=first.title,
+            kind=first.kind,
+            total=_plural(total, "item"),
+            first=f"{min(moments):%Y-%m-%d}",
+            last=f"{max(moments):%Y-%m-%d}",
+            sources=[
+                {"name": name, "slug": _slug(name), "count": _plural(count, "item")}
+                for name, count in sorted(services.items())
+            ],
+            years=years,
+            related=related,
+            mail=mail,
+            back=f"{up}index.html",
+        )
+    return pages
+
+
+PAGES_LIST = ".chattr-pages"
+
+
+def _forget_old_pages(out_root: Path, record: Path, written: list[Path]) -> None:
+    """Delete pages written last time that were not written now (a person was renamed or merged,
+    a conversation went away), then any folder that leaves empty. Only `.html` files this
+    function's own record names are ever deleted."""
+    root = out_root.resolve()
+    now = {path.resolve().relative_to(root).as_posix() for path in written}
+    try:
+        before = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        before = []
+    for relative in before if isinstance(before, list) else []:
+        if not isinstance(relative, str) or relative in now or not relative.endswith(".html"):
+            continue
+        page = (root / relative).resolve()
+        if not page.is_relative_to(root) or not page.is_file():
+            continue
+        page.unlink()
+        folder = page.parent
+        while folder != root and folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+            folder = folder.parent
+    record.parent.mkdir(parents=True, exist_ok=True)
+    temporary = record.with_name(record.name + ".part")
+    temporary.write_text(json.dumps(sorted(now), ensure_ascii=False, indent=0), encoding="utf-8")
+    os.replace(temporary, record)
+
+
 def render_pages(
     renderer: Renderer,
     out_root: PathLike,
     attachment_roots: Sequence[PathLike] = (),
+    pages_list: Optional[PathLike] = None,
 ) -> list[Path]:
-    """Write every page and the index under `out_root`; returns the files written."""
+    """Write every page and the index under `out_root`; returns the files written.
+
+    Pages written by an earlier call and no longer wanted are deleted. The list of what was
+    written is kept in `pages_list` (default: `.chattr-pages` in `out_root`).
+    """
     site = _Site(renderer, Path(out_root), attachment_roots)
     written = []
     for spec in renderer.pages:
@@ -352,8 +523,15 @@ def render_pages(
         text = _mail_page(site, spec) if spec.kind == "mail" else _message_page(site, spec)
         path.write_text(text, encoding="utf-8")
         written.append(path)
+    for relative, text in _folder_indexes(site).items():
+        path = site.out_root / relative
+        path.write_text(text, encoding="utf-8")
+        written.append(path)
     index = site.out_root / "index.html"
     index.parent.mkdir(parents=True, exist_ok=True)
     index.write_text(_index(site), encoding="utf-8")
     written.append(index)
+    _forget_old_pages(
+        site.out_root, Path(pages_list) if pages_list else site.out_root / PAGES_LIST, written
+    )
     return written

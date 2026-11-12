@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<header>
+<p class="back"><a href="{{ back }}">Everyone</a></p>
+<h1>{{ title }}</h1>
+<p class="summary">{{ total }}, from {{ first }} to {{ last }}.</p>
+</header>
+<main class="index person">
+<h2>By year</h2>
+<ul class="by-year">
+{% for y in years %}<li><a class="year" href="{{ y.href }}">{{ y.year }}</a> <span class="count">{{ y.count }}</span> {% for s in y.sources %}<span class="badge s-{{ s.slug }}">{{ s.name }} {{ s.count }}</span> {% endfor %}</li>
+{% endfor %}</ul>
+<h2>Sources</h2>
+<ul class="sources">
+{% for s in sources %}<li><span class="badge s-{{ s.slug }}">{{ s.name }}</span> <span class="count">{{ s.count }}</span></li>
+{% endfor %}</ul>
+{% if related %}<h2>{{ "Groups" if kind == "person" else "People in this group" }}</h2>
+<ul class="related">
+{% for r in related %}<li>{% if r.href %}<a href="{{ r.href }}">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}</li>
+{% endfor %}</ul>
+{% endif %}{% if mail %}<h2>Mail</h2>
+<ul class="mail-list">
+{% for m in mail %}<li><a href="{{ m.href }}">{{ m.title }}</a></li>
+{% endfor %}</ul>
+{% endif %}
+</main>
+{% endblock %}

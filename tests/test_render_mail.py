@@ -87,7 +87,8 @@ def test_the_index_links_every_page(site) -> None:
     assert index in written and index.is_file()
     text = index.read_text(encoding="utf-8")
     hrefs = [unquote(h) for h in re.findall(r'<a href="([^"#]+\.html)"', text)]
-    assert {h for h in hrefs} == {p.path for p in renderer.pages}
+    homes = {f"{p.folder}/index.html" for p in renderer.pages if p.kind in ("person", "group")}
+    assert {h for h in hrefs} == {p.path for p in renderer.pages} | homes
     for href in hrefs:
         assert (out / href).is_file()
     assert family.ANA.name in text and family.GROUP_NAME in text and "Fotos de São Martinho" in text

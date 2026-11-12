@@ -302,8 +302,12 @@ class DatabaseManager:
 
             for attachment in record.attachments:
                 db.execute(
-                    "INSERT OR IGNORE INTO attachments (sha256, message_id, original_filename, "
-                    "mime_type, size, storage_path) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO attachments (sha256, message_id, original_filename, "
+                    "mime_type, size, storage_path) VALUES (?, ?, ?, ?, ?, ?) "
+                    # a later import that brings the file wins over a row that had none, and
+                    # over a place the file has since been moved from (filing sorts that out)
+                    "ON CONFLICT (sha256, message_id) DO UPDATE SET storage_path = "
+                    "COALESCE(excluded.storage_path, attachments.storage_path)",
                     (
                         attachment.sha256,
                         record.id,

@@ -31,7 +31,7 @@ def test_one_person_one_page_set_across_every_platform(renderer: Renderer) -> No
         renderer.messages[mid]["service"] for page in pages.values() for mid in page.message_ids
     }
     assert services == {"iMessage", "WhatsApp", "Google Voice", "Voicemail"}
-    assert {p.folder for p in pages.values()} == {f"Messages/{family.ANA.name}"}
+    assert {p.folder for p in pages.values()} == {f"People/{family.ANA.name}"}
     assert pages[2023].filename == f"(2023) {family.ANA.name}.html"
 
 
@@ -44,7 +44,7 @@ def test_a_page_holds_its_year_in_time_order(renderer: Renderer) -> None:
 
 def test_a_group_has_its_own_folder(renderer: Renderer) -> None:
     (page,) = _pages(renderer, "group", family.GROUP_NAME).values()
-    assert page.folder == f"Messages/Groups/{family.GROUP_NAME}" and page.year == 2024
+    assert page.folder == f"Groups/{family.GROUP_NAME}" and page.year == 2024
     # Ana and João wrote in the group, but their own pages don't hold it
     assert all(
         renderer.messages[m]["conversation_id"] not in page.conversation_ids
@@ -57,7 +57,7 @@ def test_a_group_has_its_own_folder(renderer: Renderer) -> None:
 def test_an_unresolved_handle_gets_a_folder_under_its_own_name(renderer: Renderer) -> None:
     pages = _pages(renderer, "person", family.UNKNOWN_HANDLE)
     assert sorted(pages) == [2018, 2025]  # a missed call, then a delivery text
-    assert pages[2025].folder == f"Messages/{family.UNKNOWN_HANDLE}"
+    assert pages[2025].folder == f"People/{family.UNKNOWN_HANDLE}"
     assert {renderer.messages[m]["service"] for m in pages[2018].message_ids} == {"Google Voice"}
 
 

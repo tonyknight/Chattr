@@ -44,7 +44,7 @@ def test_every_person_and_group_page_is_written_at_its_planned_path(site) -> Non
     renderer, out, written = site
     planned = {out / p.path for p in renderer.pages if p.kind in ("person", "group")}
     assert planned <= set(written) and all(p.is_file() for p in planned)
-    assert (out / "Messages" / family.ANA.name / f"(2023) {family.ANA.name}.html").is_file()
+    assert (out / "People" / family.ANA.name / f"(2023) {family.ANA.name}.html").is_file()
 
 
 def test_pages_are_self_contained(site) -> None:
@@ -296,3 +296,79 @@ def test_clicking_a_date_goes_back_to_the_top(site) -> None:
     assert headings
     for heading in headings:
         assert re.fullmatch(r'<a href="#top" title="Back to the top">[^<]+</a>', heading)
+
+
+# --- A page for each person, and pages that go away ----------------------------------------------
+
+
+def _home(site, title: str) -> str:
+    renderer, out, _ = site
+    folder = next(p.folder for p in renderer.pages if p.title == title and p.kind != "mail")
+    return (out / folder / "index.html").read_text(encoding="utf-8")
+
+
+def test_every_person_has_an_index_of_all_that_came_from_them(site) -> None:
+    renderer, out, written = site
+    page = _home(site, family.ANA.name)
+    assert f"<h1>{family.ANA.name}</h1>" in page
+    years = sorted(p.year for p in renderer.pages if p.title == family.ANA.name)
+    for year in years:
+        assert f'href="({year})%20{family.ANA.name.replace(" ", "%20")}.html"' in page
+    for service in ("iMessage", "WhatsApp", "Google Voice", "Voicemail"):
+        assert f">{service}" in page  # every source she is in, with its count
+    total = sum(len(p.message_ids) for p in renderer.pages if p.title == family.ANA.name)
+    assert f"{total} items" in page
+    assert out / "People" / family.ANA.name / "index.html" in written
+
+
+def test_a_persons_index_links_their_groups_and_their_mail(site) -> None:
+    page = _home(site, family.JOAO.name)
+    assert f'href="../../Groups/{family.GROUP_NAME.replace(" ", "%20")}/index.html"' in page
+    assert "<h2>Mail</h2>" in page and 'href="../../Mail/' in page
+
+
+def test_a_groups_index_links_its_members(site) -> None:
+    page = _home(site, family.GROUP_NAME)
+    assert "People in this group" in page
+    assert f'href="../../People/{family.ANA.name.replace(" ", "%20")}/index.html"' in page
+
+
+def test_year_pages_link_back_to_the_persons_index_and_the_index_to_everyone(site) -> None:
+    _, year_page = _page(site, "person", family.ANA.name, 2024)
+    assert '<a class="year home" href="index.html">All years</a>' in year_page
+    assert '<a href="../../index.html">Everyone</a>' in _home(site, family.ANA.name)
+
+
+def test_the_top_index_links_each_persons_index(site) -> None:
+    _, out, _ = site
+    text = (out / "index.html").read_text(encoding="utf-8")
+    assert f'<a href="People/{family.ANA.name.replace(" ", "%20")}/index.html">' in text
+
+
+def test_pages_that_are_no_longer_wanted_are_removed(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    database = tmp_path / "chattr.sqlite"
+    out = tmp_path / "out"
+    with DatabaseManager(database) as db:
+        db.upsert(
+            ConversationRecord("WhatsApp", "c1", name="+15550101", participants=("+15550101",)),
+            [
+                MessageRecord(
+                    timestamp=datetime(2024, 3, 1, tzinfo=timezone.utc),
+                    sender="+15550101",
+                    body="olá",
+                )
+            ],
+            db.start_import("WhatsApp", "test"),
+        )
+        db.commit()
+        render_pages(Renderer(db), out)
+        old = out / "People" / "+15550101"
+        assert (old / "(2024) +15550101.html").is_file() and (old / "index.html").is_file()
+        (old / "notes.txt").write_text("mine")  # something a person put there
+        db.connection.execute("UPDATE handles SET person = ?", (family.ANA.name,))
+        db.commit()
+        render_pages(Renderer(db), out)
+    assert (out / "People" / family.ANA.name / "index.html").is_file()
+    assert sorted(p.name for p in old.iterdir()) == ["notes.txt"]  # only Chattr's pages went

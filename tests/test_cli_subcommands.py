@@ -122,9 +122,7 @@ def test_convert_imessage_imports_into_the_archive_by_default(
     assert _archived(chattr_root) == 7
     site = chattr_root / "Output" / "Chattr"
     assert (site / "index.html").is_file()
-    assert (
-        site / "Messages" / "Groups" / family.GROUP_NAME / f"(2024) {family.GROUP_NAME}.html"
-    ).is_file()
+    assert (site / "Groups" / family.GROUP_NAME / f"(2024) {family.GROUP_NAME}.html").is_file()
     assert not (chattr_root / "Output" / "iMessage" / "imessage_export.json").exists()
     assert _run(chattr_root, "convert", "imessage", db, "--spam-mode", "disabled") == 0
     assert "0 new" in capsys.readouterr().out and _archived(chattr_root) == 7
