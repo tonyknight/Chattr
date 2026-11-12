@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional, Union
 
 from chattr import blobs
 from chattr.imessage_events import announcement, edit_history
+from chattr.imessage_schema import FILTER_CATEGORIES
 from chattr.imessage_groups import handle_groups, merged_chats
 
 from chattr.parsers.base_parser import BaseParser
@@ -242,9 +243,13 @@ class IMessageParser(BaseParser):
         if event is None and history.fully_unsent:
             event = f"{actor or 'Someone'} unsent a message."
         placeholder_only = text is not None and not text.replace(OBJECT_REPLACEMENT, "").strip()
+        category = FILTER_CATEGORIES.get(raw.get("filter_action") or 0)
+        spam_reason = None if event is not None else message.spam_reason
+        if category == "junk" and event is None and self.spam_mode != "disabled":
+            spam_reason = spam_reason or "Marked as junk by Messages"
         if event is not None:
             content_type, text = "system", event
-        elif message.spam_reason:
+        elif spam_reason:
             content_type = "system"
         elif attachments and (not text or placeholder_only):
             content_type = "media"
@@ -253,8 +258,12 @@ class IMessageParser(BaseParser):
         if placeholder_only:
             text = None
         extras: dict[str, Any] = {"transport": message.service}
+        if category:
+            extras["apple_filter"] = category
+        if raw.get("deleted_from") is not None:
+            extras["recently_deleted"] = True
         for key, value in (
-            ("spam_reason", message.spam_reason),
+            ("spam_reason", spam_reason),
             ("balloon_bundle_id", message.balloon_bundle_id),
             ("read_at", _iso(message.date_read)),
             ("delivered_at", _iso(message.date_delivered)),

@@ -232,6 +232,10 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
             for e in specific.get("edits", [])[:-1]  # the last is the text shown
         ],
         "edited": bool(specific.get("edits") or specific.get("edited_at")),
+        "marks": [
+            *(["Deleted in Messages"] if specific.get("recently_deleted") else []),
+            *([str(specific["apple_filter"]).capitalize()] if specific.get("apple_filter") else []),
+        ],
     }
 
 

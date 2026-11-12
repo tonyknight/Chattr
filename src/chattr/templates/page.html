@@ -11,7 +11,7 @@
 <main>
 {% for day in days %}<h2 class="date-separator" id="date-{{ day.date }}"><a href="#top" title="Back to the top">{{ day.label }}</a></h2>
 {% for e in day.entries %}<article class="entry {{ e.direction }} k-{{ e.kind }}" id="m-{{ e.id }}">
-<div class="meta"><span class="badge s-{{ e.service_slug }}">{{ e.service }}</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.time }}</time> <span class="offset">{{ e.offset }}</span></div>
+<div class="meta"><span class="badge s-{{ e.service_slug }}">{{ e.service }}</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.time }}</time> <span class="offset">{{ e.offset }}</span>{% for mark in e.marks %} <span class="mark">{{ mark }}</span>{% endfor %}</div>
 {% if e.reply %}<div class="reply">In reply to <a href="{{ e.reply.href }}">{{ e.reply.author }}{% if e.reply.author %}: {% endif %}{{ e.reply.text }}</a></div>
 {% endif %}{% if e.kind == 'call' %}<div class="body call">{{ e.call_label }}{% if e.duration %} · {{ e.duration }}{% endif %}</div>
 {% elif e.kind == 'voicemail' %}<div class="body voicemail">Voicemail{% if e.duration %} · {{ e.duration }}{% endif %}</div>

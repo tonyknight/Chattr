@@ -249,3 +249,92 @@ def test_the_page_shows_replies_edits_and_events(chattr_root: Path, tmp_path: Pa
     # events and the unsent message are system lines
     for text in ("unsent a message.", "named the conversation", "left the conversation."):
         assert text in page
+
+
+# --- Recently deleted messages, and Messages' own filter categories -------------------------------
+
+
+def _filtered(tmp_path: Path) -> Path:
+    path = tmp_path / "chat.db"
+    db = sqlite3.connect(path)
+    db.executescript(
+        SCHEMA + "ALTER TABLE message ADD COLUMN filter_action INTEGER DEFAULT 0;"
+        "ALTER TABLE message ADD COLUMN filter_sub_action INTEGER DEFAULT 0;"
+        "CREATE TABLE chat_recoverable_message_join (chat_id INTEGER, message_id INTEGER, delete_date INTEGER);"
+    )
+    db.execute("INSERT INTO handle (ROWID, id, service) VALUES (1, ?, 'iMessage')", (ANA,))
+    db.execute(
+        "INSERT INTO chat (ROWID, guid, style, chat_identifier, service_name) VALUES (1, 'chat-1', 45, ?, 'iMessage')",
+        (ANA,),
+    )
+    db.execute("INSERT INTO chat_handle_join VALUES (1, 1)")
+    rows = [
+        (1, "an ordinary message", 0, True),
+        (2, "deleted last week", 0, False),
+        (3, "WIN A PRIZE", 2, True),
+        (4, "20% off today", 3, True),
+        (5, "Your code is 123456", 4, True),
+    ]
+    for rowid, text, action, in_chat in rows:
+        db.execute(
+            "INSERT INTO message (ROWID, guid, text, service, handle_id, date, filter_action) VALUES (?, ?, ?, 'iMessage', 1, ?, ?)",
+            (rowid, f"g-{rowid}", text, apple_time(family.at(2024, 5, 1, 10, rowid)), action),
+        )
+        table = (
+            "chat_message_join (chat_id, message_id)"
+            if in_chat
+            else "chat_recoverable_message_join (chat_id, message_id)"
+        )
+        db.execute(f"INSERT INTO {table} VALUES (1, ?)", (rowid,))
+    db.commit()
+    db.close()
+    return path
+
+
+def test_a_recently_deleted_message_goes_back_into_its_conversation(tmp_path: Path) -> None:
+    (batch,) = IMessageParser(spam_mode="disabled").parse(_filtered(tmp_path))
+    records = {r.source_id: r for r in batch.records}
+    assert len(records) == 5  # not a second, orphan conversation
+    assert records["g-2"].body == "deleted last week"
+    assert records["g-2"].service_specific["recently_deleted"] is True
+    assert "recently_deleted" not in records["g-1"].service_specific
+
+
+def test_messages_own_categories_are_kept_with_the_message(tmp_path: Path) -> None:
+    (batch,) = IMessageParser(spam_mode="disabled").parse(_filtered(tmp_path))
+    found = {r.source_id: r.service_specific.get("apple_filter") for r in batch.records}
+    assert found == {
+        "g-1": None,
+        "g-2": None,
+        "g-3": "junk",
+        "g-4": "promotion",
+        "g-5": "transaction",
+    }
+    # with filtering off nothing is tagged as spam, whatever Messages thought
+    assert {r.content_type for r in batch.records} == {"text"}
+
+
+def test_with_filtering_on_what_messages_called_junk_is_tagged_and_kept(tmp_path: Path) -> None:
+    (batch,) = IMessageParser(spam_mode="conservative").parse(_filtered(tmp_path))
+    records = {r.source_id: r for r in batch.records}
+    assert records["g-3"].service_specific["spam_reason"] == "Marked as junk by Messages"
+    assert records["g-3"].body == "WIN A PRIZE"  # tagged, never dropped
+    for kept in ("g-4", "g-5"):  # promotions and codes are categories, not spam
+        assert "spam_reason" not in records[kept].service_specific
+
+
+def test_the_page_marks_deleted_and_categorised_messages(chattr_root: Path, tmp_path: Path) -> None:
+    settings = Settings.load(chattr_root)
+    commands.convert_imessage(settings, db_path=_filtered(tmp_path), spam_mode="disabled")
+    commands.generate_html(settings, out=tmp_path / "out")
+    page = next((tmp_path / "out" / "People").rglob("(2024) *.html")).read_text(encoding="utf-8")
+    assert "Deleted in Messages" in page and "Promotion" in page and "Transaction" in page
+
+
+def test_an_event_is_never_also_called_spam(tmp_path: Path) -> None:
+    (batch,) = IMessageParser(spam_mode="aggressive", aliases={ANA: "Ana", JOAO: "João"}).parse(
+        _database(tmp_path)
+    )
+    records = {r.source_id: r for r in batch.records}
+    assert records["g-7"].body == "João left the conversation."
+    assert "spam_reason" not in records["g-7"].service_specific

@@ -117,9 +117,23 @@ def message_select(caps: Capabilities) -> str:
     for column in MESSAGE_COLUMNS:
         present = column in caps.message and (column not in paired or caps.filter_actions)
         parts.append(f"m.{column} AS {column}" if present else f"NULL AS {column}")
+    # A message deleted in Messages is kept for 30 days in a separate table, out of its
+    # conversation. It is read back into the conversation it came from, and marked.
+    recoverable = caps.recoverable_messages
+    chat = "COALESCE(c.chat_id, d.chat_id)" if recoverable else "c.chat_id"
     return (
-        "SELECT " + ", ".join(parts) + ", c.chat_id AS chat_id, "
+        "SELECT " + ", ".join(parts) + f", {chat} AS chat_id, "
+        f"{'d.chat_id' if recoverable else 'NULL'} AS deleted_from, "
         "(SELECT COUNT(*) FROM message_attachment_join a WHERE m.ROWID = a.message_id) "
         "AS num_attachments "
         "FROM message AS m LEFT JOIN chat_message_join AS c ON m.ROWID = c.message_id"
+        + (
+            " LEFT JOIN chat_recoverable_message_join AS d ON m.ROWID = d.message_id"
+            if recoverable
+            else ""
+        )
     )
+
+
+#: `message.filter_action`: the category Messages itself gave a message.
+FILTER_CATEGORIES = {2: "junk", 3: "promotion", 4: "transaction"}
