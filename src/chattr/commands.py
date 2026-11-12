@@ -37,6 +37,7 @@ from chattr.translation import (
 )
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
 from chattr.filing import Filed, file_attachments
+from chattr.imessage_schema import NotMessagesDatabase
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
@@ -699,7 +700,7 @@ def _import_imessage(
         raise CommandError(f"iMessage database not found: {db_path}")
     try:
         batches = parser.parse(db_path)
-    except PermissionError as error:  # the reader's message explains macOS Full Disk Access
+    except (PermissionError, NotMessagesDatabase) as error:  # each message says what to do
         raise CommandError(str(error)) from error
     except sqlite3.DatabaseError as error:
         raise CommandError(f"Can't read the iMessage database {db_path}: {error}") from error

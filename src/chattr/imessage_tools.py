@@ -300,6 +300,14 @@ class DatabaseDiagnostics:
             # Database size
             db_size = os.path.getsize(self.db_path)
             print(f"    Total database size: {self._format_file_size(db_size)}")
+            try:
+                from chattr.imessage_schema import Capabilities
+
+                print("    Schema capabilities:")
+                for name, found in Capabilities.determine(self._db).describe().items():
+                    print(f"        {name}: {'Detected' if found else 'Not in this database'}")
+            except Exception as error:
+                print(f"    Schema capabilities: could not be read ({error})")
 
             # Duplicated contacts (simplified version)
             try:

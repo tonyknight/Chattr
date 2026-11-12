@@ -60,6 +60,7 @@ from tqdm import tqdm
 
 from chattr import apple_time, typedstream
 from chattr.chatdb import connect_readonly
+from chattr.imessage_schema import Capabilities, message_select
 
 # Optional dependencies for contact parsing
 try:
@@ -439,6 +440,8 @@ class iMessageDatabaseParser:
             self.spam_filter = None
 
         # Cache handles and chats for lookups
+        # What this database's schema holds; queries ask only for columns that exist.
+        self.capabilities = Capabilities.determine(self.conn)
         self.handles = self._load_handles()
         self.chats = self._load_chats()  # Keep simple version for backward compatibility
         self.chat_guids = self._load_chat_guids()
@@ -855,65 +858,18 @@ class iMessageDatabaseParser:
     def get_messages_with_fallback(
         self, limit: Optional[int] = None, chat_filter: Optional[int] = None
     ) -> List[Message]:
-        """Get messages with schema version fallback"""
+        """Every message (newest first), read by the columns this database has."""
 
-        # Try newest schema first (macOS Ventura+)
-        try:
-            query_new = """
-            SELECT
-                m.rowid, m.guid, m.text, m.attributedBody, m.service, m.handle_id, m.date,
-                m.date_read, m.date_delivered, m.is_from_me, m.is_read,
-                m.item_type, m.associated_message_guid, m.associated_message_type,
-                m.balloon_bundle_id, m.associated_message_emoji,
-                c.chat_id,
-                (SELECT COUNT(*) FROM message_attachment_join a WHERE m.ROWID = a.message_id) as num_attachments
-            FROM message as m
-            LEFT JOIN chat_message_join as c ON m.ROWID = c.message_id
-            WHERE 1=1
-            """
-
-            params: List[Any] = []
-            if chat_filter:
-                query_new += " AND c.chat_id = ?"
-                params.append(chat_filter)
-
-            query_new += " ORDER BY m.date DESC"
-
-            if limit:
-                query_new += " LIMIT ?"
-                params.append(limit)
-
-            return self._execute_message_query(query_new, params)
-
-        except sqlite3.OperationalError as e:
-            print(f"New schema failed: {e}")
-
-        # Fallback to older schema
-        try:
-            query_old = """
-            SELECT 
-                m.*, c.chat_id,
-                (SELECT COUNT(*) FROM message_attachment_join a WHERE m.ROWID = a.message_id) as num_attachments
-            FROM message as m
-            LEFT JOIN chat_message_join as c ON m.ROWID = c.message_id
-            WHERE 1=1
-            """
-
-            params = []
-            if chat_filter:
-                query_old += " AND c.chat_id = ?"
-                params.append(chat_filter)
-
-            query_old += " ORDER BY m.date DESC"
-
-            if limit:
-                query_old += " LIMIT ?"
-                params.append(limit)
-
-            return self._execute_message_query(query_old, params)
-
-        except sqlite3.OperationalError as e:
-            raise Exception(f"Unsupported database schema: {e}")
+        query = message_select(self.capabilities) + " WHERE 1=1"
+        params: List[Any] = []
+        if chat_filter:
+            query += " AND c.chat_id = ?"
+            params.append(chat_filter)
+        query += " ORDER BY m.date DESC"
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        return self._execute_message_query(query, params)
 
     def _execute_message_query(self, query: str, params: List) -> List[Message]:
         """Execute message query and return Message objects"""
@@ -965,13 +921,13 @@ class iMessageDatabaseParser:
             date_delivered=self._row_get(row, "date_delivered"),
             is_from_me=bool(row["is_from_me"]),
             is_read=bool(self._row_get(row, "is_read", False)),
-            item_type=self._row_get(row, "item_type", 0),
+            item_type=self._row_get(row, "item_type", 0) or 0,
             associated_message_guid=self._row_get(row, "associated_message_guid"),
             associated_message_type=self._row_get(row, "associated_message_type"),
             balloon_bundle_id=self._row_get(row, "balloon_bundle_id"),
             associated_message_emoji=self._row_get(row, "associated_message_emoji"),
             chat_id=self._row_get(row, "chat_id"),
-            num_attachments=self._row_get(row, "num_attachments", 0),
+            num_attachments=self._row_get(row, "num_attachments", 0) or 0,
             timestamp=timestamp,
             sender=sender,
             chat_name=chat_name,
@@ -1078,18 +1034,7 @@ class iMessageDatabaseParser:
         try:
             # Build query for this batch
             placeholders = ",".join(["?"] * len(message_ids))
-            query = f"""
-            SELECT
-                m.rowid, m.guid, m.text, m.attributedBody, m.service, m.handle_id, m.date,
-                m.date_read, m.date_delivered, m.is_from_me, m.is_read,
-                m.item_type, m.associated_message_guid, m.associated_message_type,
-                m.balloon_bundle_id, m.associated_message_emoji,
-                c.chat_id,
-                (SELECT COUNT(*) FROM message_attachment_join a WHERE m.ROWID = a.message_id) as num_attachments
-            FROM message as m
-            LEFT JOIN chat_message_join as c ON m.ROWID = c.message_id
-            WHERE m.rowid IN ({placeholders})
-            """
+            query = message_select(self.capabilities) + f" WHERE m.rowid IN ({placeholders})"
 
             params: List[Any] = list(message_ids)
             if chat_filter:
