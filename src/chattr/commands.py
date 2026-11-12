@@ -90,6 +90,11 @@ class CommandError(Exception):
     """A command couldn't run; the message explains why in plain words."""
 
 
+class NothingFound(CommandError):
+    """The export was read and holds nothing to import (an empty conversation, say). Someone
+    importing many exports at once can skip this one and carry on."""
+
+
 @dataclass
 class ConvertResult:
     service: str
@@ -136,8 +141,13 @@ def make_resolver(
         raise CommandError(str(error)) from error
 
 
-def _resolve(db: DatabaseManager, resolver: PeopleResolver, service: str) -> int:
-    """Link this service's handles to people; returns how many are still unnamed."""
+def _resolve(db: DatabaseManager, resolver: Optional[PeopleResolver], service: str) -> int:
+    """Link this service's handles to people; returns how many are still unnamed.
+
+    With no resolver nothing is linked (the caller links once, after many imports: linking looks
+    at every handle of the service, so doing it per conversation makes a large export crawl)."""
+    if resolver is None:
+        return 0
     return len(db.resolve_people(resolver, service=service).unresolved)
 
 
@@ -228,7 +238,7 @@ def _convert_batches(
     aliases: Optional[PathLike],
     attachments_dir: Optional[PathLike],
     transcriber: Optional[Transcriber],
-    resolver: PeopleResolver,
+    resolver: Optional[PeopleResolver],
 ) -> ConvertResult:
     """Import a service whose parser returns one batch per conversation (mail, Google Voice,
     voicemail).
@@ -256,7 +266,7 @@ def _convert_batches(
     except sqlite3.DatabaseError as error:
         raise CommandError(f"Can't read the {name} database in {export}: {error}") from error
     if not batches:
-        raise CommandError(f"No {name} items found in {export}")
+        raise NothingFound(f"No {name} items found in {export}")
     if route == "central":
         with DatabaseManager(central_database(settings)) as db:
             counts = import_conversations(db, settings, name, export, batches)
@@ -328,8 +338,12 @@ def convert(
     transcriber: Optional[Transcriber] = None,
     contacts: Optional[PathLike] = None,
     region: Optional[str] = None,
+    resolve: bool = True,
 ) -> ConvertResult:
     """Convert one export along the chosen route.
+
+    With `resolve=False` the people are not linked afterwards: call `people()` once when every
+    export of a batch has been converted.
 
     Afterwards the service's handles are linked to people (`contacts`: a vCard file, `aliases`, the
     owner from `owner` or the settings); `ConvertResult.unresolved` counts those still unnamed.
@@ -353,7 +367,7 @@ def convert(
     elif not export.is_file():
         raise CommandError(f"Export file not found: {export}")
     name, parser_class = SERVICES[key]
-    resolver = make_resolver(settings, owner, aliases, contacts, region)
+    resolver = make_resolver(settings, owner, aliases, contacts, region) if resolve else None
     if key in BATCH_SERVICES:
         return _convert_batches(
             settings,
@@ -370,7 +384,7 @@ def convert(
     parser = parser_class()
     messages = parser.parse(str(export))
     if not messages:
-        raise CommandError(f"No messages found in {export}")
+        raise NothingFound(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
     conversation = _conversation(name, export, parser, messages)
     if attachments_dir:

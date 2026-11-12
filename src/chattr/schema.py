@@ -174,7 +174,18 @@ JOIN conversations c ON c.id = m.conversation_id
 LEFT JOIN handles h ON h.id = m.sender_handle_id;
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3)]
+# Version 4: finding a handle's messages (who is still unnamed, which messages are the owner's) is
+# done for every import. Without this index each of those reads every message in the archive.
+MIGRATION_4 = """
+CREATE INDEX messages_by_sender ON messages (sender_handle_id);
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [
+    (1, MIGRATION_1),
+    (2, MIGRATION_2),
+    (3, MIGRATION_3),
+    (4, MIGRATION_4),
+]
 CURRENT_VERSION = MIGRATIONS[-1][0]
 
 
