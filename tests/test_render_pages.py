@@ -227,3 +227,72 @@ def test_an_attachment_path_cannot_escape_the_roots(hostile) -> None:
     text = written[0].read_text(encoding="utf-8")
     assert "etc/x" not in text.split('id="chattr-data"')[0]
     assert "&lt;script&gt;x&lt;/script&gt;.png" in text  # shown by name, as text
+
+
+# --- Colour and the way back to the top ----------------------------------------------------------
+
+
+def _css_vars(page: str, dark: bool = False) -> dict[str, str]:
+    block = re.findall(r":root \{([^}]*)\}", page)[1 if dark else 0]
+    return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})", block))
+
+
+def _rgb(colour: str) -> tuple[int, int, int]:
+    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
+
+
+def _luminance(colour: str) -> float:
+    channels = [c / 255 for c in _rgb(colour)]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def _is_orange(colour: str) -> bool:
+    red, green, blue = _rgb(colour)
+    return red > green > blue
+
+
+def test_the_heat_map_is_four_steps_of_orange_darker_for_busier_days(site) -> None:
+    _, page = _page(site, "person", family.ANA.name, 2024)
+    light = _css_vars(page)
+    steps = [light[f"l{n}"] for n in (1, 2, 3, 4)]
+    assert all(_is_orange(step) for step in steps)
+    assert [_luminance(s) for s in steps] == sorted((_luminance(s) for s in steps), reverse=True)
+    assert "#FA9237".lower() in [s.lower() for s in steps]  # qromaOrange is one of the steps
+
+
+def test_in_the_dark_the_busiest_days_stand_out_most(site) -> None:
+    _, page = _page(site, "person", family.ANA.name, 2024)
+    dark = _css_vars(page, dark=True)
+    steps = [dark[f"l{n}"] for n in (1, 2, 3, 4)]
+    assert all(_is_orange(step) for step in steps)
+    assert [_luminance(s) for s in steps] == sorted(_luminance(s) for s in steps)
+
+
+def test_nothing_on_the_page_is_green_any_more(site) -> None:
+    _, page = _page(site, "person", family.ANA.name, 2024)
+    for mode in (False, True):
+        for name, colour in _css_vars(page, dark=mode).items():
+            red, green, blue = _rgb(colour)
+            assert not (green > red and green > blue), f"--{name} {colour} is green"
+
+
+def test_dates_are_orange_and_readable(site) -> None:
+    _, page = _page(site, "person", family.ANA.name, 2024)
+    assert re.search(r"\.date-separator a \{[^}]*color:\s*var\(--date\)", page)
+    for mode in (False, True):
+        colours = _css_vars(page, dark=mode)
+        assert _is_orange(colours["date"])
+        lighter, darker = sorted(
+            (_luminance(colours["date"]), _luminance(colours["bg"])), reverse=True
+        )
+        assert (lighter + 0.05) / (darker + 0.05) >= 4.5  # readable text, not just decoration
+
+
+def test_clicking_a_date_goes_back_to_the_top(site) -> None:
+    _, page = _page(site, "person", family.ANA.name, 2024)
+    assert '<body id="top">' in page
+    headings = re.findall(r'<h2 class="date-separator" id="date-[\d-]+">(.*?)</h2>', page)
+    assert headings
+    for heading in headings:
+        assert re.fullmatch(r'<a href="#top" title="Back to the top">[^<]+</a>', heading)

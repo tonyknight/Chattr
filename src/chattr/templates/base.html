@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{% endblock %}</title>
 <style>
-:root { --bg:#f5f6f8; --fg:#1d2330; --muted:#69728a; --card:#ffffff; --line:#dfe3ec; --sent:#dff1e3; --received:#ffffff; --link:#1c5fd4; --l1:#cfe8d4; --l2:#9fd2aa; --l3:#5fb872; --l4:#2f8f47; }
-@media (prefers-color-scheme: dark) { :root { --bg:#14171f; --fg:#e4e8f2; --muted:#8e98b3; --card:#1d222e; --line:#2c3344; --sent:#21402b; --received:#1d222e; --link:#7fb0ff; --l1:#25402d; --l2:#2f6a40; --l3:#3f9a58; --l4:#5ccf7d; } }
+:root { --bg:#f5f6f8; --fg:#1d2330; --muted:#69728a; --card:#ffffff; --line:#dfe3ec; --sent:#fdefe0; --received:#ffffff; --link:#1c5fd4; --date:#a85208; --l1:#fde6d0; --l2:#fcc594; --l3:#fa9237; --l4:#c2600c; --on-l4:#ffffff; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171f; --fg:#e4e8f2; --muted:#8e98b3; --card:#1d222e; --line:#2c3344; --sent:#3a2a17; --received:#1d222e; --link:#7fb0ff; --date:#fa9237; --l1:#3d2610; --l2:#7a4513; --l3:#b8641a; --l4:#fa9237; --on-l4:#1d2330; } }
 * { box-sizing: border-box; }
 body { margin:0; font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
 header, main, .calendar { max-width: 52rem; margin: 0 auto; padding: 0 1rem; }
@@ -21,8 +21,9 @@ a { color: var(--link); }
 .month-name { font-weight:600; font-size:.85rem; margin-bottom:.25rem; }
 .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; font-size:.7rem; text-align:center; }
 .grid .d { display:block; border-radius:3px; padding:1px 0; color:var(--muted); text-decoration:none; }
-.grid a.d { color:var(--fg); } .grid a.l1 { background:var(--l1); } .grid a.l2 { background:var(--l2); } .grid a.l3 { background:var(--l3); } .grid a.l4 { background:var(--l4); }
-.date-separator { margin:1.6rem 0 .6rem; font-size:.95rem; color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:.2rem; }
+.grid a.d { color:var(--fg); } .grid a.l1 { background:var(--l1); } .grid a.l2 { background:var(--l2); } .grid a.l3 { background:var(--l3); } .grid a.l4 { background:var(--l4); color:var(--on-l4); font-weight:600; }
+.date-separator { margin:1.6rem 0 .6rem; font-size:.95rem; color:var(--date); border-bottom:1px solid var(--line); padding-bottom:.2rem; }
+.date-separator a { color:var(--date); text-decoration:none; } .date-separator a:hover { text-decoration:underline; }
 .entry { background:var(--received); border:1px solid var(--line); border-radius:.6rem; padding:.5rem .75rem; margin:.4rem 0; max-width:85%; }
 .entry.sent { background:var(--sent); margin-left:auto; }
 .entry.system { max-width:100%; text-align:center; color:var(--muted); font-size:.9rem; background:transparent; border-style:dashed; }
@@ -49,7 +50,7 @@ a { color: var(--link); }
 .back { font-size:.85rem; }
 </style>
 </head>
-<body>
+<body id="top">
 {% block content %}{% endblock %}
 {% block island %}{% endblock %}
 </body>

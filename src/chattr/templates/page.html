@@ -9,7 +9,7 @@
 {% for month in months %}<div class="month"><div class="month-name">{{ month.name }}</div><div class="grid">{% for cell in month.cells %}{% if cell.day == 0 %}<span class="d"></span>{% elif cell.count %}<a href="#date-{{ cell.date }}" class="d l{{ cell.level }}" title="{{ cell.count }} message{{ '' if cell.count == 1 else 's' }}">{{ cell.day }}</a>{% else %}<span class="d">{{ cell.day }}</span>{% endif %}{% endfor %}</div></div>
 {% endfor %}</section>
 <main>
-{% for day in days %}<h2 class="date-separator" id="date-{{ day.date }}">{{ day.label }}</h2>
+{% for day in days %}<h2 class="date-separator" id="date-{{ day.date }}"><a href="#top" title="Back to the top">{{ day.label }}</a></h2>
 {% for e in day.entries %}<article class="entry {{ e.direction }} k-{{ e.kind }}" id="m-{{ e.id }}">
 <div class="meta"><span class="badge s-{{ e.service_slug }}">{{ e.service }}</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.time }}</time> <span class="offset">{{ e.offset }}</span></div>
 {% if e.kind == 'call' %}<div class="body call">{{ e.call_label }}{% if e.duration %} · {{ e.duration }}{% endif %}</div>
