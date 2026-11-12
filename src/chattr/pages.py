@@ -16,7 +16,7 @@ import calendar
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence, Union
 from urllib.parse import quote, urlparse
@@ -226,6 +226,45 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
             for a in site.renderer.attachments.get(message["id"], [])
         ],
         "reactions": _standing_reactions(site, message["id"]),
+        "reply": _reply(site, message, page_dir),
+        "edits": [
+            {"text": e.get("text") or "", "at": _when(e.get("at"), message)}
+            for e in specific.get("edits", [])[:-1]  # the last is the text shown
+        ],
+        "edited": bool(specific.get("edits") or specific.get("edited_at")),
+    }
+
+
+def _when(iso: Optional[str], message: dict[str, Any]) -> str:
+    """An edit's time in the message's own zone, as the page shows times."""
+    try:
+        moment = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return ""
+    offset = message["tz_offset_minutes"]
+    if offset is not None:
+        moment = moment + timedelta(minutes=offset)
+    return f"{moment:%Y-%m-%d %H:%M:%S}"
+
+
+def _reply(site: _Site, message: dict[str, Any], page_dir: Path) -> Optional[dict[str, str]]:
+    """What a reply answers: who said it, its first words, and a link to it (on any page)."""
+    target_id = site.renderer.by_source.get(message["reply_to"] or "")
+    target = site.renderer.messages.get(target_id or "")
+    if target is None:
+        return None
+    spec = site.renderer.page_of.get(target["id"])
+    here = site.renderer.page_of.get(message["id"])
+    href = f"#m-{target['id']}"
+    if spec is not None and here is not None and spec.path != here.path:
+        other = os.path.relpath(site.out_root / spec.path, page_dir).replace(os.sep, "/")
+        href = quote(other, safe="/()") + href
+    words = (target["body"] or target["transcript"] or "").strip().replace("\n", " ")
+    sender = target["sender_handle_id"]
+    return {
+        "href": href,
+        "author": site.label(sender) if sender else ("Me" if target["is_from_owner"] else ""),
+        "text": (words[:120] + "…") if len(words) > 120 else (words or "(no text)"),
     }
 
 

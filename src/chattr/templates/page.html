@@ -12,12 +12,14 @@
 {% for day in days %}<h2 class="date-separator" id="date-{{ day.date }}"><a href="#top" title="Back to the top">{{ day.label }}</a></h2>
 {% for e in day.entries %}<article class="entry {{ e.direction }} k-{{ e.kind }}" id="m-{{ e.id }}">
 <div class="meta"><span class="badge s-{{ e.service_slug }}">{{ e.service }}</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.time }}</time> <span class="offset">{{ e.offset }}</span></div>
-{% if e.kind == 'call' %}<div class="body call">{{ e.call_label }}{% if e.duration %} · {{ e.duration }}{% endif %}</div>
+{% if e.reply %}<div class="reply">In reply to <a href="{{ e.reply.href }}">{{ e.reply.author }}{% if e.reply.author %}: {% endif %}{{ e.reply.text }}</a></div>
+{% endif %}{% if e.kind == 'call' %}<div class="body call">{{ e.call_label }}{% if e.duration %} · {{ e.duration }}{% endif %}</div>
 {% elif e.kind == 'voicemail' %}<div class="body voicemail">Voicemail{% if e.duration %} · {{ e.duration }}{% endif %}</div>
 {% if e.transcript %}<blockquote class="transcript">{{ e.transcript | nl2br }}</blockquote>{% endif %}
 {% endif %}
 {% if e.kind not in ('call', 'voicemail') and e.body %}<div class="body">{{ e.body | nl2br }}</div>{% endif %}
-{% if e.translation %}<div class="translation">{{ e.translation | nl2br }}</div>{% endif %}
+{% if e.edited %}<details class="edits"><summary>Edited{% if e.edits %} ({{ e.edits | length }} earlier version{{ "" if e.edits | length == 1 else "s" }}){% endif %}</summary>{% for v in e.edits %}<div class="edit"><span class="note">{{ v.at }}</span> {{ v.text | nl2br }}</div>{% endfor %}</details>
+{% endif %}{% if e.translation %}<div class="translation">{{ e.translation | nl2br }}</div>{% endif %}
 {% for a in e.attachments %}<div class="attachment">{% if a.href and a.kind == 'image' %}<a href="{{ a.href }}"><img src="{{ a.href }}" alt="{{ a.name }}" loading="lazy"></a>{% elif a.href and a.kind == 'video' %}<video controls preload="none"><source src="{{ a.href }}"></video>{% elif a.href and a.kind == 'audio' %}<audio controls preload="none">
 {% if a.playable %}<source src="{{ a.playable }}" type="audio/mp4">
 {% endif %}<source src="{{ a.href }}">

@@ -105,6 +105,10 @@ class Renderer:
             if message["is_from_owner"] and message["sender_handle_id"]:
                 self.owner_handles.add(message["sender_handle_id"])
         self.pages: list[PageSpec] = self._plan()
+        #: Messages by the id their source gave them (an iMessage GUID), for replies.
+        self.by_source: dict[str, str] = {
+            m["source_id"]: mid for mid, m in self.messages.items() if m["source_id"]
+        }
         #: The page each message is on (so its files can be put beside it).
         self.page_of: dict[str, PageSpec] = {
             message_id: spec for spec in self.pages for message_id in spec.message_ids

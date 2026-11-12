@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 from chattr import blobs
+from chattr.imessage_events import announcement, edit_history
 from chattr.imessage_groups import handle_groups, merged_chats
 
 from chattr.parsers.base_parser import BaseParser
@@ -191,6 +192,12 @@ class IMessageParser(BaseParser):
             service_specific={"chat_identifier": chat.chat_identifier, "style": chat.style},
         )
 
+    def _handle_name(self, reader: iMessageDatabaseParser, rowid: int) -> Optional[str]:
+        address = reader.handles.get(rowid) if rowid else None
+        if not address:
+            return None
+        return self._name(address, reader._get_sender_name(rowid, False)) or address
+
     def _participants(self, reader: iMessageDatabaseParser, chat: Any) -> tuple[str, ...]:
         """Everyone in the conversation: the people of every chat row merged into it."""
         found: list[str] = []
@@ -226,8 +233,18 @@ class IMessageParser(BaseParser):
             sender_name = None
         attachments = tuple(self._attachment(a) for a in (message.attachments or []))
         text = message.text
+        raw = message.raw
+        actor = (self.owner or "You") if message.is_from_me else sender_name
+        history = edit_history(raw.get("message_summary_info"))
+        event = announcement(
+            raw, actor=actor, name_of=lambda rowid: self._handle_name(reader, rowid)
+        )
+        if event is None and history.fully_unsent:
+            event = f"{actor or 'Someone'} unsent a message."
         placeholder_only = text is not None and not text.replace(OBJECT_REPLACEMENT, "").strip()
-        if message.spam_reason:
+        if event is not None:
+            content_type, text = "system", event
+        elif message.spam_reason:
             content_type = "system"
         elif attachments and (not text or placeholder_only):
             content_type = "media"
@@ -244,6 +261,19 @@ class IMessageParser(BaseParser):
         ):
             if value:
                 extras[key] = value
+        if history.edits:
+            extras["edits"] = [
+                {"part": e.part, "at": e.at.isoformat(), "text": e.text} for e in history.edits
+            ]
+        if raw.get("date_edited"):
+            extras["edited_at"] = _iso(raw["date_edited"])
+        if history.unsent_parts:
+            extras["unsent"] = True if history.fully_unsent else history.unsent_parts
+        if (raw.get("item_type") or 0) != 0:
+            extras["event"] = {
+                "item_type": raw.get("item_type") or 0,
+                "group_action_type": raw.get("group_action_type") or 0,
+            }
         return MessageRecord(
             timestamp=message.timestamp,
             sender=raw_handle,
@@ -251,6 +281,7 @@ class IMessageParser(BaseParser):
             body=text,
             content_type=content_type,
             source_id=message.guid,
+            reply_to=raw.get("thread_originator_guid") or None,
             is_from_owner=message.is_from_me,
             attachments=attachments,
             reactions=tuple(self._reaction(reader, t) for t in (message.tapbacks or [])),

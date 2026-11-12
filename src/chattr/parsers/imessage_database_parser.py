@@ -225,6 +225,9 @@ class Message:
     # Optional fields for enriched data
     attachments: Optional[List["Attachment"]] = field(default=None)
     tapbacks: Optional[List["Tapback"]] = field(default=None)
+    # The row's other columns (replies, edits, group events, filter categories, payloads): every
+    # column `imessage_schema.MESSAGE_COLUMNS` names, None where the database has none.
+    raw: Dict[str, Any] = field(default_factory=dict)
     # Why the spam filter flagged this message (None when kept as ordinary content).
     # Flagged messages are still returned: filtering tags, it never drops.
     spam_reason: Optional[str] = None
@@ -928,6 +931,11 @@ class iMessageDatabaseParser:
             associated_message_emoji=self._row_get(row, "associated_message_emoji"),
             chat_id=self._row_get(row, "chat_id"),
             num_attachments=self._row_get(row, "num_attachments", 0) or 0,
+            raw={
+                key: row[key]
+                for key in row.keys()
+                if key not in ("text", "attributedbody", "attributedBody")
+            },
             timestamp=timestamp,
             sender=sender,
             chat_name=chat_name,

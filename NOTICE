@@ -39,6 +39,10 @@ Derived portions (from imessage-exporter 5.0.1):
   - src/chattr/imessage_groups.py: grouping handle rows that are one person
     and merging chats that are one conversation (tables/handle.rs,
     tables/chat_handle.rs, docs/tables/duplicates.md).
+  - src/chattr/imessage_events.py: reading edit history from
+    message_summary_info and turning event rows into sentences
+    (message_types/edited.rs, tables/messages/models/group_action.rs,
+    tables/messages/message.rs).
   - src/chattr/people.py, Contacts.from_macos: reading the macOS Contacts
     databases (the exporter's app/contacts.rs).
 
