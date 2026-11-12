@@ -186,6 +186,8 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
         link = {
             "href": specific["shared_link"],
             "text": specific.get("link_text") or specific["shared_link"],
+            "summary": specific.get("link_summary") or "",
+            "site": specific.get("link_site") or "",
         }
     call_label = {
         "received": "Received call",
@@ -234,6 +236,7 @@ def _entry(site: _Site, message: dict[str, Any], page_dir: Path) -> dict[str, An
         "edited": bool(specific.get("edits") or specific.get("edited_at")),
         "marks": [
             *(["Deleted in Messages"] if specific.get("recently_deleted") else []),
+            *([str(specific["effect"])] if specific.get("effect") else []),
             *([str(specific["apple_filter"]).capitalize()] if specific.get("apple_filter") else []),
         ],
     }

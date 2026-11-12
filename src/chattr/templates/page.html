@@ -24,7 +24,7 @@
 {% if a.playable %}<source src="{{ a.playable }}" type="audio/mp4">
 {% endif %}<source src="{{ a.href }}">
 </audio>{% if a.playable %}<div class="note"><a href="{{ a.href }}">Original recording ({{ a.format }})</a></div>{% elif a.needs_copy %}<div class="note">This recording is in a format most browsers cannot play ({{ a.format }}). <a href="{{ a.href }}">Open the file</a> in an audio player.</div>{% endif %}{% elif a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>
-{% endfor %}{% if e.link %}<a class="link-preview" href="{{ e.link.href }}" rel="noopener noreferrer">{{ e.link.text }}</a>{% elif e.link_text %}<span class="link-preview">{{ e.link_text }}</span>{% endif %}
+{% endfor %}{% if e.link %}<a class="link-preview" href="{{ e.link.href }}" rel="noopener noreferrer">{{ e.link.text }}</a>{% if e.link.site or e.link.summary %}<div class="note">{% if e.link.site %}{{ e.link.site }}{% endif %}{% if e.link.site and e.link.summary %} · {% endif %}{{ e.link.summary }}</div>{% endif %}{% elif e.link_text %}<span class="link-preview">{{ e.link_text }}</span>{% endif %}
 {% if e.reactions %}<div class="reactions">{% for r in e.reactions %}<span>{{ r.label }} · {{ r.who }}</span>{% endfor %}</div>{% endif %}
 </article>
 {% endfor %}{% endfor %}

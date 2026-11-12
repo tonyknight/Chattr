@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional, Union
 
 from chattr import blobs
 from chattr.imessage_events import announcement, edit_history
+from chattr.imessage_payload import describe, effect
 from chattr.imessage_schema import FILTER_CATEGORIES
 from chattr.imessage_groups import handle_groups, merged_chats
 
@@ -243,8 +244,11 @@ class IMessageParser(BaseParser):
         if event is None and history.fully_unsent:
             event = f"{actor or 'Someone'} unsent a message."
         placeholder_only = text is not None and not text.replace(OBJECT_REPLACEMENT, "").strip()
+        balloon = (
+            describe(message.balloon_bundle_id, raw.get("payload_data")) if event is None else None
+        )
         category = FILTER_CATEGORIES.get(raw.get("filter_action") or 0)
-        spam_reason = None if event is not None else message.spam_reason
+        spam_reason = None if event is not None or balloon is not None else message.spam_reason
         if category == "junk" and event is None and self.spam_mode != "disabled":
             spam_reason = spam_reason or "Marked as junk by Messages"
         if event is not None:
@@ -257,6 +261,11 @@ class IMessageParser(BaseParser):
             content_type = "text"
         if placeholder_only:
             text = None
+        if balloon is not None and balloon.kind == "link":
+            if balloon.url and (text or "").strip() in (balloon.url, ""):
+                text = None  # the address is shown as the link
+        elif balloon is not None and not text and not attachments:
+            text = balloon.line
         extras: dict[str, Any] = {"transport": message.service}
         if category:
             extras["apple_filter"] = category
@@ -270,6 +279,23 @@ class IMessageParser(BaseParser):
         ):
             if value:
                 extras[key] = value
+        if balloon is not None and balloon.kind == "link":
+            if balloon.url:
+                extras["shared_link"] = balloon.url
+            for key, found in (
+                ("link_text", balloon.title),
+                ("link_summary", balloon.summary),
+                ("link_site", balloon.site),
+            ):
+                if found:
+                    extras[key] = found
+        elif balloon is not None:
+            extras["app"] = {"kind": balloon.kind, "name": balloon.app}
+            if balloon.url:
+                extras["shared_link"] = balloon.url
+        sent_with = effect(raw.get("expressive_send_style_id"))
+        if sent_with:
+            extras["effect"] = sent_with
         if history.edits:
             extras["edits"] = [
                 {"part": e.part, "at": e.at.isoformat(), "text": e.text} for e in history.edits

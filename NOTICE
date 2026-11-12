@@ -43,6 +43,10 @@ Derived portions (from imessage-exporter 5.0.1):
     message_summary_info and turning event rows into sentences
     (message_types/edited.rs, tables/messages/models/group_action.rs,
     tables/messages/message.rs).
+  - src/chattr/imessage_payload.py: unarchiving NSKeyedArchiver payloads and
+    reading link previews and app messages; the table of balloon bundle ids
+    and send effects (util/plist.rs, message_types/url.rs,
+    message_types/app.rs, tables/messages/message.rs).
   - src/chattr/people.py, Contacts.from_macos: reading the macOS Contacts
     databases (the exporter's app/contacts.rs).
 
