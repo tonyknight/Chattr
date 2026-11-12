@@ -162,6 +162,16 @@ def build_parser() -> argparse.ArgumentParser:
     chats = sub.add_parser("chats", help="list the chats in an iMessage database")
     chats.add_argument("database", nargs="?", help="chat.db (default: configured)")
 
+    missing = sub.add_parser(
+        "missing",
+        help="iMessage: which conversations hold attachments that are not on this Mac yet",
+    )
+    missing.add_argument("database", nargs="?", help="chat.db (default: configured)")
+    missing.add_argument("--attachment-root", help="a copy of ~/Library/Messages/Attachments")
+    missing.add_argument(
+        "--list", metavar="TEXT", help="list the files in conversations matching TEXT"
+    )
+
     doctor = sub.add_parser("doctor", help="check an iMessage database")
     doctor.add_argument("database", nargs="?", help="chat.db (default: configured)")
     doctor.add_argument(
@@ -396,6 +406,39 @@ def _run_chats(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_missing(settings: Settings, args: argparse.Namespace) -> int:
+    database = args.database or _configured_chat_db(settings)
+    report = commands.missing_attachments(database, args.attachment_root)
+    print(
+        f"{report.total:,} attachments, {report.missing:,} missing "
+        f"({report.missing_bytes / 1e9:.2f} GB) in {len(report.conversations):,} conversations"
+    )
+    if not report.missing:
+        return 0
+    if args.list is None:
+        print("\nMessages fetches a file from iCloud when its part of the conversation is shown:")
+        print(
+            "open each conversation below and scroll back to the dates given, then run this again.\n"
+        )
+        print(f"{'missing':>7} {'of':>6} {'size':>9}  {'first':10} {'last':10}  conversation")
+        for entry in report.conversations:
+            print(
+                f"{entry.missing:>7} {entry.total:>6} {entry.missing_bytes / 1e6:>7.1f}MB  "
+                f"{entry.first or '?':10} {entry.last or '?':10}  {entry.name}"
+            )
+        return 0
+    wanted = args.list.lower()
+    for entry in report.conversations:
+        if wanted in entry.name.lower():
+            print(f"\n{entry.name}")
+            for file in entry.files:
+                print(
+                    f"  {file.date or 'unknown date':10}  {'sent' if file.sent else 'received':8} "
+                    f"{file.size / 1e6:>7.1f}MB  {file.reason:26} {file.name}"
+                )
+    return 0
+
+
 def _run_doctor(settings: Settings, args: argparse.Namespace) -> int:
     database = args.database or _configured_chat_db(settings)
     results = [commands.doctor(database, check) for check in args.check or commands.DOCTOR_CHECKS]
@@ -432,6 +475,7 @@ SUBCOMMANDS = {
     "rebuild": _run_rebuild,
     "chats": _run_chats,
     "doctor": _run_doctor,
+    "missing": _run_missing,
     "serve": _run_serve,
 }
 

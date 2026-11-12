@@ -16,7 +16,7 @@ import json
 import os
 import re
 import sqlite3
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence, Union
@@ -35,9 +35,11 @@ from chattr.translation import (
     make_translator,
     translate_archive,
 )
+from chattr import apple_time
+from chattr.chatdb import connect_readonly
 from chattr.database_manager import DatabaseManager, ImportCounts, PeopleResult
 from chattr.filing import Filed, file_attachments
-from chattr.imessage_schema import NotMessagesDatabase
+from chattr.imessage_schema import Capabilities, NotMessagesDatabase
 from chattr.imessage_export import export_to_json, print_message_summary
 from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
@@ -104,6 +106,7 @@ class ConvertResult:
     json_path: Optional[Path] = None
     html_path: Optional[Path] = None
     unresolved: int = 0  # handles of this service that no contact or alias could name
+    missing_attachments: int = 0  # iMessage: files the database names that are not on this Mac
 
 
 def central_database(settings: Settings) -> Path:
@@ -609,11 +612,6 @@ def convert_imessage(
         raise CommandError(
             "HTML, owner and aliases need the central archive; the native JSON route has none."
         )
-    if route == "central" and attachments_dir:
-        raise CommandError(
-            "Archival attachment copies are made with the JSON route until the unified "
-            "attachment pipeline is built."
-        )
     db_path = db_path or settings.get_expanded_path(
         "services.imessage.preferences.database.default_db_path"
     )
@@ -643,6 +641,7 @@ def convert_imessage(
             db_path,
             IMessageParser(
                 person_for=lambda address: resolver.person_for(address, None),
+                attachments_dir=attachments_dir,
                 contacts=contacts,
                 region=str(region),
                 attachment_root=attachment_root or None,
@@ -730,7 +729,115 @@ def _import_imessage(
             html_path = _render_db(
                 db, output_folder(settings, "Chattr"), attachment_roots(settings)
             )
-    return ConvertResult("iMessage", counts, html_path=html_path, unresolved=unresolved)
+    return ConvertResult(
+        "iMessage",
+        counts,
+        html_path=html_path,
+        unresolved=unresolved,
+        missing_attachments=parser.missing_attachments,
+    )
+
+
+@dataclass
+class MissingFile:
+    date: str
+    sent: bool
+    size: int
+    name: str
+    reason: str  # "file not on this Mac" | "no file was ever recorded"
+
+
+@dataclass
+class MissingIn:
+    """One conversation's missing attachments."""
+
+    name: str
+    total: int = 0
+    missing: int = 0
+    missing_bytes: int = 0
+    first: str = ""
+    last: str = ""
+    files: list[MissingFile] = field(default_factory=list)
+
+
+@dataclass
+class MissingReport:
+    total: int = 0
+    missing: int = 0
+    missing_bytes: int = 0
+    conversations: list[MissingIn] = field(default_factory=list)  # most missing data first
+
+
+def missing_attachments(
+    db_path: PathLike, attachment_root: Optional[PathLike] = None
+) -> MissingReport:
+    """Which conversations hold attachments whose files are not on this Mac. Read-only.
+
+    Messages fetches an attachment from iCloud only when its part of the conversation has been
+    shown, so this says where to scroll before importing. `attachment_root` replaces
+    `~/Library/Messages/Attachments` (for a copy of the store).
+    """
+    from chattr.attachment_manager import IMESSAGE_ATTACHMENTS_PREFIX
+
+    path = Path(db_path).expanduser()
+    if not path.is_file():
+        raise CommandError(f"iMessage database not found: {path}")
+    root = Path(attachment_root).expanduser() if attachment_root else None
+
+    def on_disk(filename: Optional[str]) -> bool:
+        if not filename:
+            return False
+        if root and filename.startswith(IMESSAGE_ATTACHMENTS_PREFIX):
+            return (root / filename[len(IMESSAGE_ATTACHMENTS_PREFIX) :].lstrip("/")).is_file()
+        return Path(filename).expanduser().is_file()
+
+    try:
+        conn = connect_readonly(path)
+        Capabilities.determine(conn)
+        rows = conn.execute(
+            "SELECT a.ROWID, a.filename, a.transfer_name, COALESCE(a.total_bytes, 0), m.date, "
+            "m.is_from_me, COALESCE(NULLIF(c.display_name, ''), c.chat_identifier, "
+            "'(not in any conversation)') "
+            "FROM attachment a "
+            "LEFT JOIN message_attachment_join j ON j.attachment_id = a.ROWID "
+            "LEFT JOIN message m ON m.ROWID = j.message_id "
+            "LEFT JOIN chat_message_join cm ON cm.message_id = m.ROWID "
+            "LEFT JOIN chat c ON c.ROWID = cm.chat_id GROUP BY a.ROWID"
+        ).fetchall()
+        conn.close()
+    except (NotMessagesDatabase, sqlite3.DatabaseError) as error:
+        raise CommandError(f"Can't read the iMessage database {path}: {error}") from error
+
+    report = MissingReport(total=len(rows))
+    found: dict[str, MissingIn] = {}
+    for _, filename, name, size, stamp, from_me, chat in rows:
+        entry = found.setdefault(chat, MissingIn(chat))
+        entry.total += 1
+        if on_disk(filename):
+            continue
+        moment = apple_time.to_utc(stamp) if stamp else None
+        day = f"{moment.astimezone():%Y-%m-%d}" if moment else ""
+        entry.missing += 1
+        entry.missing_bytes += size
+        entry.files.append(
+            MissingFile(
+                day,
+                bool(from_me),
+                size,
+                name or "(unnamed)",
+                "file not on this Mac" if filename else "no file was ever recorded",
+            )
+        )
+    for entry in found.values():
+        if entry.missing:
+            entry.files.sort(key=lambda f: (f.date, f.name))
+            days = [f.date for f in entry.files if f.date]
+            entry.first, entry.last = (days[0], days[-1]) if days else ("", "")
+            report.conversations.append(entry)
+            report.missing += entry.missing
+            report.missing_bytes += entry.missing_bytes
+    report.conversations.sort(key=lambda e: (-e.missing_bytes, -e.missing, e.name))
+    return report
 
 
 def list_chats(db_path: PathLike) -> list[tuple[int, str]]:

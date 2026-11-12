@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import re
 from pathlib import Path
 from typing import Union
@@ -30,3 +31,17 @@ def store_by_hash(root: Union[str, Path], data: bytes, suffix: str = "") -> tupl
         temporary.write_bytes(data)
         os.replace(temporary, target)  # never leave a half-written file under its final name
     return digest, relative
+
+
+def store_file_by_hash(root: Union[str, Path], source: Union[str, Path], digest: str) -> str:
+    """Copy the file `source` (whose SHA-256 is `digest`) under its hash; returns the path relative
+    to `root`. The file is copied, never moved, and never read into memory whole."""
+    extension = re.sub(r"[^a-z0-9]", "", Path(source).suffix.lower())[:10]
+    relative = f"{digest[:2]}/{digest}" + (f".{extension}" if extension else "")
+    target = Path(root) / relative
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".part")
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, target)
+    return relative

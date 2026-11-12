@@ -339,6 +339,16 @@ class DatabaseManager:
             else:
                 counts.unchanged += 1
 
+            if record.attachments:
+                # A file that was not there last time is recorded without one, under a stand-in
+                # hash. When it arrives, that stand-in goes: the import is the truth. A row that
+                # has its file is never dropped.
+                marks = ", ".join("?" for _ in record.attachments)
+                db.execute(
+                    f"DELETE FROM attachments WHERE message_id = ? AND storage_path IS NULL "
+                    f"AND sha256 NOT IN ({marks})",
+                    (record.id, *(a.sha256 for a in record.attachments)),
+                )
             for attachment in record.attachments:
                 db.execute(
                     "INSERT INTO attachments (sha256, message_id, original_filename, "

@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
+from chattr import blobs
 from chattr.imessage_groups import handle_groups, merged_chats
 
 from chattr.parsers.base_parser import BaseParser
@@ -72,6 +73,7 @@ class IMessageParser(BaseParser):
         owner: Optional[str] = None,
         aliases: Optional[dict[str, str]] = None,
         person_for: Optional[Callable[[str], Optional[str]]] = None,
+        attachments_dir: Optional[PathLike] = None,
     ) -> None:
         self.contacts = contacts
         self.region = region
@@ -85,6 +87,10 @@ class IMessageParser(BaseParser):
         self.aliases = aliases or {}
         #: The person an address belongs to, when the contacts know (used to join addresses).
         self.person_for = person_for
+        #: Where to copy the attachments that are on this Mac (by content hash; filed later).
+        self.attachments_dir = Path(attachments_dir) if attachments_dir else None
+        #: Attachments the database names whose files are not on this Mac (after `parse`).
+        self.missing_attachments = 0
         self.handle_groups: list[list[str]] = []
         self._conversation_of: dict[int, int] = {}
         self._members: dict[int, list[int]] = {}
@@ -104,6 +110,7 @@ class IMessageParser(BaseParser):
         )
         try:
             self._group(reader)
+            self.missing_attachments = 0
             messages = self._read(reader)
             self.spam_stats = reader.get_spam_filtering_stats()
             return self._batches(reader, messages)
@@ -252,14 +259,23 @@ class IMessageParser(BaseParser):
 
     def _attachment(self, attachment: Attachment) -> AttachmentRecord:
         name = attachment.transfer_name or os.path.basename(attachment.filename or "")
-        digest = _hash_file(self._source_path(attachment)) if attachment.filename else None
+        source = self._source_path(attachment) if attachment.filename else None
+        digest = _hash_file(source) if source else None
+        stored = None
         if digest is None:  # file not on this machine: identify it by its chat.db GUID instead
+            self.missing_attachments += 1
             digest = hashlib.sha256(f"attachment:{attachment.guid or name}".encode()).hexdigest()
+        elif self.attachments_dir is not None and source is not None:
+            try:  # a copy; the Mac's own store is never changed
+                stored = blobs.store_file_by_hash(self.attachments_dir, source, digest)
+            except OSError:
+                self.missing_attachments += 1
         return AttachmentRecord(
             sha256=digest,
             original_filename=name or None,
             mime_type=attachment.mime_type,
             size=attachment.total_bytes or None,
+            storage_path=stored,
         )
 
     def _source_path(self, attachment: Attachment) -> Path:
