@@ -67,7 +67,7 @@ def test_published_pages_show_the_files_under_the_person(
     )
     out = tmp_path / "out"
     commands.publish(settings, out=out, attachments_dirs=[staging])
-    photos = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.png"))
+    photos = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.jpg"))
     assert len(photos) == 2 and all("/iMessage/(2023-06-04)" in photo for photo in photos)
     page = next(out.rglob("(2023) *.html")).read_text(encoding="utf-8")
     assert "file not in this archive" not in page and "<img" in page

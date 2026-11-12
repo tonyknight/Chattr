@@ -355,8 +355,12 @@ class DatabaseManager:
                     "mime_type, size, storage_path) VALUES (?, ?, ?, ?, ?, ?) "
                     # a later import that brings the file wins over a row that had none, and
                     # over a place the file has since been moved from (filing sorts that out)
-                    "ON CONFLICT (sha256, message_id) DO UPDATE SET storage_path = "
-                    "COALESCE(excluded.storage_path, attachments.storage_path)",
+                    # … except a file that was converted when it was filed (a HEIC photo kept as
+                    # JPEG): the same original staged again must not be filed a second time
+                    "ON CONFLICT (sha256, message_id) DO UPDATE SET storage_path = CASE "
+                    "WHEN attachments.processing_info IS NOT NULL "
+                    "AND attachments.storage_path IS NOT NULL THEN attachments.storage_path "
+                    "ELSE COALESCE(excluded.storage_path, attachments.storage_path) END",
                     (
                         attachment.sha256,
                         record.id,

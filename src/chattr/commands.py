@@ -441,6 +441,7 @@ def publish(
     make_playable: bool = True,
     progress: Optional[Callable[[int, int], None]] = None,
     before_pages: Optional[Callable[[], None]] = None,
+    convert_images: bool = True,
 ) -> Optional[Published]:
     """File every attachment beside the person it came from, then draw every page.
 
@@ -456,7 +457,9 @@ def publish(
         renderer = Renderer(db)
         if not renderer.pages:
             return None
-        filed = file_attachments(db, renderer, folder, roots, make_playable, progress)
+        filed = file_attachments(
+            db, renderer, folder, roots, make_playable, progress, convert_images
+        )
         if before_pages:
             before_pages()  # filing is done; the pages come next
         pages = render_pages(renderer, folder, roots, pages_list)

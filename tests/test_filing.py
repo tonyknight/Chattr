@@ -303,3 +303,177 @@ def test_audio_a_browser_already_plays_is_not_copied(archive: Archive) -> None:
     filed = archive.file()
     assert archive.files() == [f"People/{ANA}/Google Voice/(2018-09-08) 10-22-45 {ANA}.mp3"]
     assert filed.playable_made == 0 and filed.unplayable == []
+
+
+# --- Pictures any device can open, dated -------------------------------------------------------------
+
+
+def _picture(fmt: str, exif_date: str | None = None, mode: str = "RGB") -> bytes:
+    import io
+
+    from PIL import Image
+
+    if fmt == "HEIF":
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    image = Image.new(mode, (64, 48), (200, 120, 40, 255)[: len(mode)])
+    out = io.BytesIO()
+    options = {}
+    if exif_date:
+        exif = Image.Exif()
+        exif.get_ifd(0x8769)[0x9003] = exif_date
+        options["exif"] = exif
+    image.save(out, fmt, **options)
+    return out.getvalue()
+
+
+def _photo(archive: Archive, data: bytes, suffix: str, service: str = "iMessage", **more) -> None:
+    kind = dict(type="group", name="Costa Family") if more.get("group") else dict(name=ANA)
+    archive.add(
+        ConversationRecord(service, "chat-photo", participants=(ANA,), **kind),
+        MessageRecord(
+            timestamp=_at(2024, 3, 1, 14, 5, 9),
+            sender=ANA,
+            sender_name=ANA,
+            attachments=(_blob(archive.staging, data, suffix, f"IMG_0001{suffix}"),),
+        ),
+    )
+
+
+def _taken(path: Path) -> str | None:
+    from PIL import Image
+
+    with Image.open(path) as image:
+        return image.getexif().get_ifd(0x8769).get(0x9003)
+
+
+@pytest.mark.parametrize(("fmt", "suffix"), [("HEIF", ".heic"), ("PNG", ".png"), ("WEBP", ".webp")])
+def test_pictures_are_filed_as_jpeg_dated_by_their_message(
+    archive: Archive, fmt: str, suffix: str
+) -> None:
+    _photo(archive, _picture(fmt), suffix)
+    filed = archive.file()
+    wanted = f"People/{ANA}/iMessage/(2024-03-01) 14-05-09 {ANA}.jpg"
+    assert archive.files() == [wanted] and filed.converted == 1
+    data = (archive.out / wanted).read_bytes()
+    assert data[:3] == b"\xff\xd8\xff"  # a JPEG
+    assert _taken(archive.out / wanted) == "2024:03:01 14:05:09"
+    assert archive.paths() == [wanted]
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
+
+
+def test_a_picture_that_knows_when_it_was_taken_keeps_that_date(archive: Archive) -> None:
+    _photo(archive, _picture("HEIF", exif_date="2023:12:25 09:30:00"), ".heic")
+    archive.file()
+    (photo,) = archive.files()
+    assert _taken(archive.out / photo) == "2023:12:25 09:30:00"  # not the day it was sent
+
+
+def test_see_through_pictures_get_a_white_background(archive: Archive) -> None:
+    from PIL import Image
+
+    _photo(archive, _picture("PNG", mode="RGBA"), ".png")
+    archive.file()
+    with Image.open(archive.out / archive.files()[0]) as image:
+        assert image.mode == "RGB" and image.size == (64, 48)
+
+
+def test_a_jpeg_that_has_its_date_is_left_exactly_as_it_is(archive: Archive) -> None:
+    jpeg = _picture("JPEG", exif_date="2023:12:25 09:30:00")
+    _photo(archive, jpeg, ".jpg")
+    filed = archive.file()
+    (photo,) = archive.files()
+    assert (archive.out / photo).read_bytes() == jpeg and (filed.converted, filed.dated) == (0, 0)
+
+
+def test_a_jpeg_with_no_date_gets_its_message_date_and_the_same_picture(archive: Archive) -> None:
+    import io
+
+    from PIL import Image
+
+    jpeg = _picture("JPEG")
+    _photo(archive, jpeg, ".jpg")
+    filed = archive.file()
+    (photo,) = archive.files()
+    assert _taken(archive.out / photo) == "2024:03:01 14:05:09" and filed.dated == 1
+    with Image.open(archive.out / photo) as now, Image.open(io.BytesIO(jpeg)) as before:
+        assert now.tobytes() == before.tobytes()  # not compressed a second time
+    _photo(archive, jpeg, ".jpg")  # and importing it again does not file a second copy
+    assert archive.file().created == [] and archive.files() == [photo]
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
+
+
+def test_other_files_are_left_exactly_as_they_are(archive: Archive) -> None:
+    gif = _picture("GIF", mode="P")
+    _photo(archive, gif, ".gif")
+    archive.file()
+    (kept,) = archive.files()
+    assert kept.endswith(".gif") and (archive.out / kept).read_bytes() == gif
+
+
+def test_a_mail_attachment_is_never_converted(archive: Archive) -> None:
+    png = _picture("PNG")
+    archive.add(
+        ConversationRecord("Mail", "thread-9", name="Logo", participants=("joao@example.org",)),
+        MessageRecord(
+            timestamp=_at(2019, 11, 2, 10, 15, 0), sender="joao@example.org", sender_name=JOAO,
+            content_type="email", body="x", mail_headers={"subject": "Logo"},
+            attachments=(_blob(archive.staging, png, ".png", "logo.png"),),
+        ),
+    )  # fmt: skip
+    archive.file()
+    (kept,) = archive.files()
+    assert kept.endswith("logo.png") and (archive.out / kept).read_bytes() == png
+
+
+def test_importing_again_does_not_make_a_second_picture(archive: Archive) -> None:
+    heic = _picture("HEIF")
+    _photo(archive, heic, ".heic")
+    archive.file()
+    before = archive.files()
+    _photo(archive, heic, ".heic")  # staged again by a second import
+    again = archive.file()
+    assert archive.files() == before and again.converted == 0 and again.created == []
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
+
+
+def test_a_picture_that_cannot_be_converted_is_kept_as_it_is_and_counted(archive: Archive) -> None:
+    _photo(archive, b"not really a picture", ".heic")
+    filed = archive.file()
+    assert archive.files() == [f"People/{ANA}/iMessage/(2024-03-01) 14-05-09 {ANA}.heic"]
+    assert filed.converted == 0 and len(filed.unconverted) == 1
+
+
+def test_conversion_can_be_turned_off(archive: Archive) -> None:
+    heic = _picture("HEIF")
+    _photo(archive, heic, ".heic")
+    filed = archive.file(convert_images=False)
+    (kept,) = archive.files()
+    assert (
+        kept.endswith(".heic")
+        and (archive.out / kept).read_bytes() == heic
+        and filed.converted == 0
+    )
+
+
+def test_the_page_shows_the_converted_picture(archive: Archive) -> None:
+    _photo(archive, _picture("HEIF"), ".heic")
+    archive.file()
+    page = next(p for p in archive.written if p.name.startswith("(2024)")).read_text("utf-8")
+    assert "<img" in page and ".jpg" in page and "file not in this archive" not in page
+
+
+def test_a_moving_picture_is_not_flattened(archive: Archive) -> None:
+    import io
+
+    from PIL import Image
+
+    frames = [Image.new("RGB", (32, 32), colour) for colour in ("red", "blue")]
+    out = io.BytesIO()
+    frames[0].save(out, "WEBP", save_all=True, append_images=frames[1:], duration=100)
+    _photo(archive, out.getvalue(), ".webp")
+    filed = archive.file()
+    (kept,) = archive.files()
+    assert kept.endswith(".webp") and (archive.out / kept).read_bytes() == out.getvalue()
+    assert filed.converted == 0 and filed.unconverted == []
