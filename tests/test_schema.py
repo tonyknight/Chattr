@@ -29,7 +29,7 @@ def test_fresh_database_reaches_the_current_version(tmp_path: Path) -> None:
     apply_migrations(conn)
     assert TABLES <= _tables(conn)
     version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == CURRENT_VERSION == 4
+    assert version == CURRENT_VERSION == 5
 
 
 def test_migrations_are_idempotent(tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 from chattr.people import PeopleResolver
 from chattr.records import (
@@ -204,9 +204,48 @@ class DatabaseManager:
                     "WHERE sender_handle_id = ? AND is_from_owner = 0",
                     (row["id"],),
                 )
+        result.newly_resolved += self._share_names_within_groups()
         result.unresolved = self.unresolved_handles(service)
         db.commit()
         return result
+
+    def group_handles(self, service: str, groups: Iterable[Iterable[str]]) -> None:
+        """Record that each group of identifiers is one person (the source says so)."""
+        for group in groups:
+            ids = sorted({self._handle_id(service, identifier, None) for identifier in group})
+            if len(ids) < 2:
+                continue
+            key = f"{service}:{ids[0]}"
+            for handle_id in ids:
+                self._db.execute(
+                    "INSERT INTO handle_groups (handle_id, group_key) VALUES (?, ?) "
+                    "ON CONFLICT (handle_id) DO UPDATE SET group_key = excluded.group_key",
+                    (handle_id, key),
+                )
+        self._db.commit()
+
+    def _share_names_within_groups(self) -> int:
+        """In a group where exactly one name is known, give it to the members with none. Two
+        different names in one group are left alone: someone chose them."""
+        shared = 0
+        rows = self._db.execute(
+            "SELECT g.group_key, h.id, h.person FROM handle_groups g JOIN handles h ON h.id = g.handle_id"
+        ).fetchall()
+        groups: dict[str, list[tuple[int, Optional[str]]]] = {}
+        for key, handle_id, person in rows:
+            groups.setdefault(key, []).append((handle_id, person))
+        for members in groups.values():
+            names = {person for _, person in members if person}
+            if len(names) != 1:
+                continue
+            (name,) = names
+            for handle_id, person in members:
+                if not person:
+                    self._db.execute(
+                        "UPDATE handles SET person = ? WHERE id = ?", (name, handle_id)
+                    )
+                    shared += 1
+        return shared
 
     def unresolved_handles(self, service: Optional[str] = None) -> list[UnresolvedHandle]:
         """Handles with no person yet, the busiest first."""

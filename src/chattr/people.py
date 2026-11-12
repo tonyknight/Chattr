@@ -19,6 +19,9 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
+import sqlite3
+from contextlib import closing
+
 import phonenumbers
 import vobject
 
@@ -68,8 +71,106 @@ class _Index:
         return len(set(self._people.values()))
 
 
+MAC_CONTACT_ENTITIES = ("ABCDContact", "ABCDSubscribedContact")
+MAC_CONTACT_ENTITY_FALLBACK = (22, 23)  # their `Z_ENT` in every macOS model seen so far
+
+
+def mac_contacts_folder() -> Path:
+    """Where macOS keeps the Contacts databases."""
+    return Path.home() / "Library" / "Application Support" / "AddressBook"
+
+
 class Contacts(_Index):
-    """People from a vCard file, found by phone number, email address or exact name."""
+    """People found by phone number, email address or exact name: from a vCard file, or from the
+    Mac's own Contacts databases."""
+
+    def __init__(self, region: str) -> None:
+        super().__init__(region)
+        #: The owner's own addresses (the card marked "me"), normalized.
+        self.me: set[str] = set()
+
+    def merge(self, other: "Contacts") -> "Contacts":
+        """Add another set of contacts; what is already known wins."""
+        for key, person in other._people.items():
+            self._people.setdefault(key, person)
+        self.me |= other.me
+        return self
+
+    @classmethod
+    def from_macos(cls, folder: Optional[PathLike] = None, region: str = "US") -> "Contacts":
+        """Read the Contacts databases of this Mac (read-only): the main one and one per account
+        under `Sources/`. A database that is missing or cannot be read is skipped.
+
+        (Reading these needs Full Disk Access for the program that runs Chattr, the same as the
+        Messages database. Derived from imessage-exporter 5.0.1; see NOTICE.)
+        """
+        root = Path(folder) if folder else mac_contacts_folder()
+        contacts = cls(region)
+        databases = [root / "AddressBook-v22.abcddb"]
+        sources = root / "Sources"
+        if sources.is_dir():
+            databases += sorted(p / "AddressBook-v22.abcddb" for p in sources.iterdir())
+        for database in databases:
+            if database.is_file():
+                try:
+                    contacts._read_macos(database)
+                except (sqlite3.Error, OSError):
+                    continue
+        return contacts
+
+    def _read_macos(self, database: Path) -> None:
+        with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)) as db:
+            columns = {str(r[1]) for r in db.execute("PRAGMA table_info(ZABCDRECORD)")}
+            try:
+                marks = ", ".join("?" for _ in MAC_CONTACT_ENTITIES)
+                entities = [
+                    row[0]
+                    for row in db.execute(
+                        f"SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME IN ({marks})",
+                        MAC_CONTACT_ENTITIES,
+                    )
+                ] or list(MAC_CONTACT_ENTITY_FALLBACK)
+            except sqlite3.Error:
+                entities = list(MAC_CONTACT_ENTITY_FALLBACK)
+            company = "ZORGANIZATION" if "ZORGANIZATION" in columns else "NULL"
+            me = "ZCONTAINERWHERECONTACTISME" if "ZCONTAINERWHERECONTACTISME" in columns else "NULL"
+            marks = ", ".join("?" for _ in entities)
+            names: dict[int, str] = {}
+            mine: set[int] = set()
+            for key, first, last, organization, is_me in db.execute(
+                f"SELECT Z_PK, ZFIRSTNAME, ZLASTNAME, {company}, {me} FROM ZABCDRECORD "
+                f"WHERE Z_ENT IN ({marks})",
+                entities,
+            ):
+                if is_me is not None:
+                    mine.add(key)
+                    continue
+                name = " ".join(
+                    str(part).strip() for part in (first, last) if part and str(part).strip()
+                )
+                name = name or (str(organization).strip() if organization else "")
+                if name:
+                    names[key] = re.sub(r"\s+", " ", name)
+            mail = {str(r[1]) for r in db.execute("PRAGMA table_info(ZABCDEMAILADDRESS)")}
+            address = "ZADDRESSNORMALIZED" if "ZADDRESSNORMALIZED" in mail else "ZADDRESS"
+            found = [
+                *db.execute(
+                    "SELECT ZOWNER, ZFULLNUMBER FROM ZABCDPHONENUMBER WHERE ZOWNER IS NOT NULL"
+                ),
+                *db.execute(
+                    f"SELECT ZOWNER, {address} FROM ZABCDEMAILADDRESS WHERE ZOWNER IS NOT NULL"
+                ),
+            ]
+        for owner, value in found:
+            if not value:
+                continue
+            if owner in mine:
+                normalized = normalize_identifier(str(value), self.region)
+                if normalized:
+                    self.me.add(normalized)
+            elif owner in names:
+                self.add(names[owner], names[owner])
+                self.add(str(value), names[owner])
 
     @classmethod
     def from_vcf(cls, path: PathLike, region: str = "US") -> "Contacts":
@@ -143,6 +244,8 @@ class PeopleResolver:
         self._owner_keys = {
             normalize_identifier(i, region) for i in [self.owner_name, *owner_identifiers] if i
         } - {""}
+        if contacts is not None and self.owner_name:
+            self._owner_keys |= contacts.me  # the Contacts card marked "me"
 
     def is_owner(self, identifier: Optional[str], display_name: Optional[str]) -> bool:
         return any(

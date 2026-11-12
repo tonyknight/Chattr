@@ -180,11 +180,22 @@ MIGRATION_4 = """
 CREATE INDEX messages_by_sender ON messages (sender_handle_id);
 """
 
+# Version 5: handles a source says are one person (an iMessage phone number and email address with
+# one `person_centric_id`). When one of them is named, the others take the name.
+MIGRATION_5 = """
+CREATE TABLE handle_groups (
+    handle_id INTEGER PRIMARY KEY REFERENCES handles (id),
+    group_key TEXT NOT NULL
+);
+CREATE INDEX handle_groups_by_key ON handle_groups (group_key);
+"""
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, MIGRATION_1),
     (2, MIGRATION_2),
     (3, MIGRATION_3),
     (4, MIGRATION_4),
+    (5, MIGRATION_5),
 ]
 CURRENT_VERSION = MIGRATIONS[-1][0]
 

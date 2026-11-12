@@ -123,6 +123,7 @@ def make_resolver(
     aliases: Optional[PathLike] = None,
     contacts: Optional[PathLike] = None,
     region: Optional[str] = None,
+    mac_contacts: Union[PathLike, bool, None] = None,
 ) -> PeopleResolver:
     """The people resolver for these inputs, falling back to the settings.
 
@@ -132,8 +133,12 @@ def make_resolver(
     region = region or str(settings.get("global.contacts.phone_region", "US"))
     contacts_file = contacts or settings.get_expanded_path("global.contacts.vcf_file_path") or None
     try:
+        known = Contacts.from_vcf(contacts_file, region) if contacts_file else None
+        if mac_contacts:  # the Mac's own Contacts; a vCard file, when given, wins on a clash
+            folder = None if mac_contacts is True else mac_contacts
+            known = (known or Contacts(region)).merge(Contacts.from_macos(folder, region))
         return PeopleResolver(
-            contacts=Contacts.from_vcf(contacts_file, region) if contacts_file else None,
+            contacts=known,
             aliases=Aliases.from_json(aliases, region) if aliases else None,
             owner_name=owner or settings.get("global.owner.name", "") or None,
             owner_identifiers=settings.get("global.owner.identifiers", []) or [],
@@ -586,6 +591,7 @@ def convert_imessage(
     html: bool = False,
     owner: Optional[str] = None,
     aliases: Optional[PathLike] = None,
+    mac_contacts: Union[PathLike, bool, None] = None,
 ) -> ConvertResult:
     """Convert an iMessage database (`chat.db`) along the chosen route.
 
@@ -631,10 +637,12 @@ def convert_imessage(
     db_path = Path(db_path).expanduser()
 
     if route == "central":
+        resolver = make_resolver(settings, owner, aliases, contacts, region, mac_contacts)
         return _import_imessage(
             settings,
             db_path,
             IMessageParser(
+                person_for=lambda address: resolver.person_for(address, None),
                 contacts=contacts,
                 region=str(region),
                 attachment_root=attachment_root or None,
@@ -648,7 +656,7 @@ def convert_imessage(
             ),
             html,
             verbose,
-            make_resolver(settings, owner, aliases, contacts, region),
+            resolver,
         )
 
     out_path = (
@@ -716,6 +724,7 @@ def _import_imessage(
     html_path = None
     with DatabaseManager(central_database(settings)) as db:
         counts = import_conversations(db, settings, "iMessage", db_path, batches)
+        db.group_handles("iMessage", parser.handle_groups)  # one person, several addresses
         unresolved = _resolve(db, resolver, "iMessage")
         if html:
             html_path = _render_db(

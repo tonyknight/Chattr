@@ -97,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--owner", help="the archive owner's name (their messages are 'sent')")
     convert.add_argument("--aliases", help="JSON file of {identifier or name: person name}")
     convert.add_argument("--contacts", help="vCard file that names the people behind phone numbers")
+    convert.add_argument(
+        "--mac-contacts",
+        action="store_true",
+        help="iMessage: also name people from this Mac's Contacts app (read-only)",
+    )
     convert.add_argument("--region", help="phone number region for contacts (default: US)")
     convert.add_argument(
         "--attachments-dir",
@@ -273,6 +278,7 @@ def _run_convert(settings: Settings, args: argparse.Namespace) -> int:
             settings,
             db_path=args.export,
             contacts=args.contacts,
+            mac_contacts=args.mac_contacts or None,
             region=args.region,
             attachment_root=args.attachment_root,
             batch_size=args.batch_size,

@@ -31,6 +31,17 @@ Derived portions (from the imessage-exporter 2.x series):
     fallback), the parsing of tapback target identifiers ("p:N/GUID"), and
     one code comment about handle ID 0.
 
+Derived portions (from imessage-exporter 5.0.1):
+
+  - src/chattr/imessage_schema.py: probing the live schema and composing the
+    message query from the columns that exist (tables/capabilities.rs,
+    tables/messages/columns.rs).
+  - src/chattr/imessage_groups.py: grouping handle rows that are one person
+    and merging chats that are one conversation (tables/handle.rs,
+    tables/chat_handle.rs, docs/tables/duplicates.md).
+  - src/chattr/people.py, Contacts.from_macos: reading the macOS Contacts
+    databases (the exporter's app/contacts.rs).
+
 Elsewhere, knowledge of Apple's iMessage database layout (tables, columns,
 timestamp encoding, tapback codes) was learned in part by studying
 imessage-exporter. Chattr's other features, such as spam filtering, vCard

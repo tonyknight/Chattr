@@ -19,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
+
+from chattr.imessage_groups import handle_groups, merged_chats
 
 from chattr.parsers.base_parser import BaseParser
 from chattr.parsers.batch import ConversationBatch
@@ -69,6 +71,7 @@ class IMessageParser(BaseParser):
         limit: Optional[int] = None,
         owner: Optional[str] = None,
         aliases: Optional[dict[str, str]] = None,
+        person_for: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self.contacts = contacts
         self.region = region
@@ -80,6 +83,11 @@ class IMessageParser(BaseParser):
         self.limit = limit
         self.owner = owner
         self.aliases = aliases or {}
+        #: The person an address belongs to, when the contacts know (used to join addresses).
+        self.person_for = person_for
+        self.handle_groups: list[list[str]] = []
+        self._conversation_of: dict[int, int] = {}
+        self._members: dict[int, list[int]] = {}
         #: Spam-filter counts from the last `parse`, for reporting.
         self.spam_stats: Optional[dict[str, int]] = None
 
@@ -95,6 +103,7 @@ class IMessageParser(BaseParser):
             aggressive_spam_filtering=self.spam_mode == "aggressive",
         )
         try:
+            self._group(reader)
             messages = self._read(reader)
             self.spam_stats = reader.get_spam_filtering_stats()
             return self._batches(reader, messages)
@@ -114,6 +123,28 @@ class IMessageParser(BaseParser):
         messages = reader.enrich_messages_with_tapbacks_parallel(messages)
         return sorted(messages, key=lambda m: (m.timestamp, m.rowid))
 
+    def _group(self, reader: iMessageDatabaseParser) -> None:
+        """Work out which handles are one person and which chats are one conversation."""
+        links: list[tuple[int, int]] = []
+        if self.person_for is not None:
+            by_person: dict[str, int] = {}
+            for rowid, address in reader.handles.items():
+                person = self.person_for(address) if rowid else None
+                if person:
+                    links.append((rowid, by_person.setdefault(person, rowid)))
+        groups = handle_groups(reader.conn, reader.capabilities, links)
+        self._conversation_of = merged_chats(reader.conn, reader.capabilities, groups)
+        self._members = {}
+        for chat, representative in self._conversation_of.items():
+            self._members.setdefault(representative, []).append(chat)
+        by_group: dict[int, set[str]] = {}
+        for rowid, group in groups.items():
+            address = (reader.handles.get(rowid) or "").strip()
+            if address:
+                by_group.setdefault(group, set()).add(address)
+        #: Addresses the database (or the contacts) says are one person, where there are several.
+        self.handle_groups = [sorted(found) for found in by_group.values() if len(found) > 1]
+
     def _batches(
         self, reader: iMessageDatabaseParser, messages: list[Message]
     ) -> list[ConversationBatch]:
@@ -121,11 +152,12 @@ class IMessageParser(BaseParser):
         for message in messages:
             if reader.is_tapback_message(message):
                 continue  # carried as a reaction on its target
-            batch = batches.get(message.chat_id)
+            chat = message.chat_id
+            if chat is not None:  # a split conversation is imported as the one it is
+                chat = self._conversation_of.get(chat, chat)
+            batch = batches.get(chat)
             if batch is None:
-                batch = batches[message.chat_id] = ConversationBatch(
-                    self._conversation(reader, message.chat_id)
-                )
+                batch = batches[chat] = ConversationBatch(self._conversation(reader, chat))
             batch.records.append(self._record(reader, message))
         return list(batches.values())
 
@@ -148,9 +180,19 @@ class IMessageParser(BaseParser):
             source_id=source_id,
             type="group" if chat.is_group_chat else "individual",
             name=name,
-            participants=tuple(chat.participants or ()),
+            participants=self._participants(reader, chat),
             service_specific={"chat_identifier": chat.chat_identifier, "style": chat.style},
         )
+
+    def _participants(self, reader: iMessageDatabaseParser, chat: Any) -> tuple[str, ...]:
+        """Everyone in the conversation: the people of every chat row merged into it."""
+        found: list[str] = []
+        for member in sorted(self._members.get(chat.rowid, [chat.rowid])):
+            other = reader.enhanced_chats.get(member)
+            for address in (other.participants if other else None) or ():
+                if address not in found:
+                    found.append(address)
+        return tuple(found)
 
     # --- Messages ---------------------------------------------------------------------------
 
