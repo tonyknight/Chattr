@@ -154,6 +154,34 @@ def test_one_service_can_be_translated_alone(tmp_path: Path) -> None:
         assert translate_archive(db, Recorder(), service="WhatsApp").translated == 1
 
 
+def test_progress_says_how_far_along_and_several_requests_go_at_once(tmp_path: Path) -> None:
+    texts = [f"{PT} Número {n}." for n in range(7)]
+    path = _db(tmp_path, *[_m(n * 10, "ana", text) for n, text in enumerate(texts)])
+    recorder, seen = Recorder(), []
+    with DatabaseManager(path) as db:
+        stats = translate_archive(
+            db, recorder, workers=3, on_progress=lambda done, total: seen.append((done, total))
+        )
+    assert stats.translated == 7 and sorted(recorder.calls) == sorted(texts)
+    assert seen[0] == (0, 7) and seen[-1] == (7, 7) and seen == sorted(seen)
+    assert all(v[0] == f"[en] {k}" for k, v in _translations(path).items())
+
+
+def test_stopping_part_way_keeps_what_was_translated(tmp_path: Path) -> None:
+    path = _db(tmp_path, *[_m(n * 10, "ana", f"{PT} Número {n}.") for n in range(6)])
+
+    def stop(done: int, total: int) -> None:
+        if done >= 2:
+            raise KeyboardInterrupt
+
+    with DatabaseManager(path) as db:
+        with pytest.raises(KeyboardInterrupt):
+            translate_archive(db, Recorder(), workers=2, on_progress=stop)
+    assert sum(1 for v in _translations(path).values() if v[0]) == 2
+    with DatabaseManager(path) as db:
+        assert translate_archive(db, Recorder()).translated == 4  # the rest, next time
+
+
 def test_tokens_are_counted(tmp_path: Path) -> None:
     path = _db(tmp_path, _m(0, "A", PT), _m(600, "A", PT + " bis"))
     with DatabaseManager(path) as db:
