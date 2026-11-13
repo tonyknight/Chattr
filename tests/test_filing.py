@@ -6,7 +6,7 @@
 
 Importers leave files wherever is convenient (by content hash, in a working folder); filing moves
 them, records the new place in the database and reports what it did. It is safe to repeat, follows a
-person who is renamed, and makes a copy a browser can play of audio it cannot (`.amr`).
+person who is renamed, stores identical files once, and files audio as `.m4a`.
 """
 
 from __future__ import annotations
@@ -242,39 +242,41 @@ def test_a_file_that_is_missing_is_reported_as_missing_on_the_page(archive: Arch
 
 
 @needs_ffmpeg
-def test_an_amr_recording_gets_a_copy_a_browser_can_play(archive: Archive) -> None:
+def test_an_amr_recording_is_filed_as_m4a(archive: Archive) -> None:
     _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31), amr(3))
     filed = archive.file()
-    stem = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}"
-    assert archive.files() == [f"{stem}.amr", f"{stem}.m4a"]  # the original is kept beside it
+    wanted = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}.m4a"
+    assert archive.files() == [wanted] and archive.paths() == [wanted]  # only the .m4a is kept
     assert filed.playable_made == 1 and filed.unplayable == []
-    assert archive.paths() == [f"{stem}.amr"]  # the database records the original
-    playable = (archive.out / f"{stem}.m4a").read_bytes()
+    playable = (archive.out / wanted).read_bytes()
     assert playable[4:8] == b"ftyp"  # an MPEG-4 file
     assert len(playable) < 3 * len(amr(3))  # of about the same size
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
 
 
 @needs_ffmpeg
-def test_the_page_plays_the_copy_and_links_the_original(archive: Archive) -> None:
+def test_the_page_plays_the_m4a(archive: Archive) -> None:
     _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31), amr(2))
     archive.file()
     page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
     audio = page[page.index("<audio") : page.index("</audio>")]
-    assert audio.index(".m4a") < audio.index(".amr")  # the playable one is offered first
-    assert 'type="audio/mp4"' in audio
-    assert "Original recording" in page
+    assert ".m4a" in audio and ".amr" not in audio and "cannot play" not in page
 
 
 @needs_ffmpeg
-def test_the_copy_is_made_once_and_moves_with_its_original(archive: Archive) -> None:
-    _voicemail(archive, "+15550101", _at(2018, 12, 21, 15, 2, 31), amr(2))
+def test_a_recording_is_converted_once_and_follows_its_person(archive: Archive) -> None:
+    data = amr(2)
+    _voicemail(archive, "+15550101", _at(2018, 12, 21, 15, 2, 31), data)
     assert archive.file().playable_made == 1
     assert archive.file().playable_made == 0
+    _voicemail(archive, "+15550101", _at(2018, 12, 21, 15, 2, 31), data)  # imported again
+    again = archive.file()
+    assert again.playable_made == 0 and again.created == []
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
     with sqlite3.connect(archive.database) as db:
         db.execute("UPDATE handles SET person = ?", (ANA,))
     archive.file()
-    stem = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}"
-    assert archive.files() == [f"{stem}.amr", f"{stem}.m4a"]
+    assert archive.files() == [f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}.m4a"]
 
 
 def test_without_ffmpeg_the_original_is_filed_and_the_gap_is_reported(
@@ -286,7 +288,75 @@ def test_without_ffmpeg_the_original_is_filed_and_the_gap_is_reported(
     _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31))
     filed = archive.file()
     original = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}.amr"
-    assert archive.files() == [original] and filed.unplayable == [original]
+    assert archive.files() == [original] and len(filed.unplayable) == 1 and filed.ffmpeg_missing
+    page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
+    assert "cannot play" in page  # and the page says why it may not play
+
+
+@needs_ffmpeg
+def test_importing_again_once_ffmpeg_is_there_converts_what_was_left(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from chattr import filing
+
+    data = amr(2)
+    with monkeypatch.context() as patch:
+        patch.setattr(filing.shutil, "which", lambda name: None)
+        _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31), data)
+        archive.file()
+    stem = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}"
+    assert archive.files() == [f"{stem}.amr"]
+    assert archive.file().playable_made == 1  # ffmpeg is installed now
+    assert archive.files() == [f"{stem}.m4a"] and archive.paths() == [f"{stem}.m4a"]
+
+
+@needs_ffmpeg
+def test_a_box_that_kept_both_files_is_left_with_the_m4a(archive: Archive) -> None:
+    _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31), amr(2))
+    archive.file(make_playable=False)
+    stem = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}"
+    (archive.out / f"{stem}.m4a").write_bytes(b"the copy an earlier version made")
+    filed = archive.file()
+    assert archive.files() == [f"{stem}.m4a"] and filed.playable_made == 1
+    assert (archive.out / f"{stem}.m4a").read_bytes() == b"the copy an earlier version made"
+
+
+@needs_ffmpeg
+def test_a_whatsapp_voice_note_is_filed_as_m4a(archive: Archive, tmp_path: Path) -> None:
+    import subprocess
+
+    note = tmp_path / "note.opus"
+    made = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "1",
+         "-c:a", "libopus", str(note)], capture_output=True,
+    )  # fmt: skip
+    if made.returncode != 0:
+        pytest.skip("this ffmpeg cannot write Opus")
+    archive.add(
+        ConversationRecord("WhatsApp", "chat-ana", name=ANA, participants=(ANA,)),
+        MessageRecord(
+            timestamp=_at(2024, 3, 1, 14, 5, 9), sender=ANA, sender_name=ANA,
+            attachments=(_blob(archive.staging, note.read_bytes(), ".opus", "PTT-001.opus"),),
+        ),
+    )  # fmt: skip
+    archive.file()
+    assert archive.files() == [f"People/{ANA}/WhatsApp/(2024-03-01) 14-05-09 {ANA}.m4a"]
+    page = next(p for p in archive.written if p.name.startswith("(2024)")).read_text("utf-8")
+    assert "<audio" in page
+
+
+def test_a_recording_attached_to_mail_is_never_converted(archive: Archive) -> None:
+    archive.add(
+        ConversationRecord("Mail", "thread-7", name="Message", participants=("joao@example.org",)),
+        MessageRecord(
+            timestamp=_at(2019, 11, 2, 10, 15, 0), sender="joao@example.org", sender_name=JOAO,
+            content_type="email", body="x", mail_headers={"subject": "Message"},
+            attachments=(_blob(archive.staging, amr(1), ".amr", "message.amr"),),
+        ),
+    )  # fmt: skip
+    archive.file()
+    (kept,) = archive.files()
+    assert kept.endswith("message.amr") and (archive.out / kept).read_bytes() == amr(1)
 
 
 def test_audio_a_browser_already_plays_is_not_copied(archive: Archive) -> None:
@@ -477,3 +547,117 @@ def test_a_moving_picture_is_not_flattened(archive: Archive) -> None:
     (kept,) = archive.files()
     assert kept.endswith(".webp") and (archive.out / kept).read_bytes() == out.getvalue()
     assert filed.converted == 0 and filed.unconverted == []
+
+
+# --- One copy of each file ---------------------------------------------------------------------------
+
+
+def _sticker(archive: Archive, data: bytes, who: str, day: int, chat: str | None = None) -> None:
+    archive.add(
+        ConversationRecord("iMessage", chat or f"chat-{who}", name=who, participants=(who,)),
+        MessageRecord(
+            timestamp=_at(2024, 3, day, 10, 0, 0), sender=who, sender_name=who,
+            attachments=(_blob(archive.staging, data, ".gif", "sticker.gif"),),
+        ),
+    )  # fmt: skip
+
+
+def _pages(archive: Archive) -> dict[str, str]:
+    return {p.parent.name: p.read_text("utf-8") for p in archive.written if p.name[:1] == "("}
+
+
+def test_the_same_file_sent_many_times_is_stored_once_and_shown_every_time(
+    archive: Archive,
+) -> None:
+    gif = _picture("GIF", mode="P")
+    for day in (1, 2, 3):
+        _sticker(archive, gif, ANA, day)
+    filed = archive.file()
+    only = f"People/{ANA}/iMessage/(2024-03-01) 10-00-00 {ANA}.gif"  # the first time it was sent
+    assert archive.files() == [only] and archive.paths() == [only] * 3
+    assert filed.created == [only] and filed.shared == 2
+    page = _pages(archive)[ANA]
+    assert page.count("<img") == 3 and "file not in this archive" not in page
+
+
+def test_a_file_sent_to_two_people_is_stored_once_and_both_pages_show_it(archive: Archive) -> None:
+    gif = _picture("GIF", mode="P")
+    _sticker(archive, gif, JOAO, 5)
+    _sticker(archive, gif, ANA, 2)  # earlier: this is where the one copy lives
+    archive.file()
+    only = f"People/{ANA}/iMessage/(2024-03-02) 10-00-00 {ANA}.gif"
+    assert archive.files() == [only]
+    pages = _pages(archive)
+    assert "<img" in pages[ANA] and "<img" in pages[JOAO]
+    assert "file not in this archive" not in pages[JOAO]
+    assert "../Ana%20Costa/iMessage/" in pages[JOAO]  # linked from the other person's folder
+
+
+def test_the_one_copy_stays_put_when_filing_again_and_when_more_arrives(archive: Archive) -> None:
+    gif = _picture("GIF", mode="P")
+    _sticker(archive, gif, ANA, 2)
+    _sticker(archive, gif, JOAO, 5)
+    archive.file()
+    before = archive.files()
+    again = archive.file()
+    assert archive.files() == before and again.created == [] and again.moved == []
+    _sticker(archive, gif, JOAO, 1)  # an older message turns up in a later import
+    later = archive.file()
+    assert archive.files() == before and later.created == [] and later.moved == []
+    assert len(set(archive.paths())) == 1 and len(archive.paths()) == 3
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
+
+
+def test_importing_everything_again_keeps_one_copy(archive: Archive) -> None:
+    gif = _picture("GIF", mode="P")
+    for _ in range(2):
+        _sticker(archive, gif, ANA, 2)
+        _sticker(archive, gif, JOAO, 5)
+        archive.file()
+    assert archive.files() == [f"People/{ANA}/iMessage/(2024-03-02) 10-00-00 {ANA}.gif"]
+    assert not any(p.is_file() for p in archive.staging.rglob("*"))
+
+
+def test_a_converted_picture_is_shared_too(archive: Archive) -> None:
+    heic = _picture("HEIF")
+    for who, day in ((ANA, 1), (JOAO, 2)):
+        archive.add(
+            ConversationRecord("iMessage", f"chat-{who}", name=who, participants=(who,)),
+            MessageRecord(
+                timestamp=_at(2024, 3, day, 14, 5, 9), sender=who, sender_name=who,
+                attachments=(_blob(archive.staging, heic, ".heic", "IMG_0001.heic"),),
+            ),
+        )  # fmt: skip
+    filed = archive.file()
+    only = f"People/{ANA}/iMessage/(2024-03-01) 14-05-09 {ANA}.jpg"
+    assert archive.files() == [only] and filed.converted == 1
+    assert _taken(archive.out / only) == "2024:03:01 14:05:09"
+    assert all("<img" in page for page in _pages(archive).values())
+
+
+def test_the_one_copy_follows_a_person_who_is_renamed(archive: Archive) -> None:
+    gif = _picture("GIF", mode="P")
+    _sticker(archive, gif, "+15550101", 2)
+    _sticker(archive, gif, JOAO, 5)
+    archive.file()
+    with sqlite3.connect(archive.database) as db:
+        db.execute("UPDATE handles SET person = ? WHERE identifier = ?", (ANA, "+15550101"))
+    archive.file()
+    only = f"People/{ANA}/iMessage/(2024-03-02) 10-00-00 {ANA}.gif"
+    assert archive.files() == [only] and set(archive.paths()) == {only}
+    assert "file not in this archive" not in _pages(archive)[JOAO]
+
+
+def test_the_same_file_in_mail_and_in_a_chat_is_kept_for_each(archive: Archive) -> None:
+    png = _picture("PNG")
+    _photo(archive, png, ".png")
+    archive.add(
+        ConversationRecord("Mail", "thread-9", name="Logo", participants=("joao@example.org",)),
+        MessageRecord(
+            timestamp=_at(2019, 11, 2, 10, 15, 0), sender="joao@example.org", sender_name=JOAO,
+            content_type="email", body="x", mail_headers={"subject": "Logo"},
+            attachments=(_blob(archive.staging, png, ".png", "logo.png"),),
+        ),
+    )  # fmt: skip
+    archive.file()
+    assert sorted(Path(f).suffix for f in archive.files()) == [".jpg", ".png"]

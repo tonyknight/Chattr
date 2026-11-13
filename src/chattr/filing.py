@@ -15,14 +15,21 @@ Chattr has always archived them, with the date they were taken written inside
 carried it. A JPEG that carries no date is given its message's date too, without touching the
 picture itself. Mail attachments are never converted: there the file itself is the record.
 
-Audio a browser cannot play (`.amr` voicemail, `.caf`) gets a copy it can, an `.m4a` (AAC) beside
-the original with the same name. The original is the record and is never changed; the copy is made
-again if it is missing, like a page.
+Audio is filed as `.m4a` (AAC), which every browser plays: voicemail (`.amr`), voice notes (`.caf`,
+`.opus`) and the other formats in `UNPLAYABLE` are transcoded with ffmpeg and only the `.m4a` is
+kept, as with pictures. Without ffmpeg the original is filed and the gap reported; importing again
+once ffmpeg is installed converts it. MP3 and M4A already play and are left alone.
+
+A file is stored once. When the same content (the same SHA-256) is attached to several messages (a
+sticker sent fifty times, a photo sent to three people), it is filed for the earliest of them and
+every other message links to that one copy. Mail and chat are kept apart, because mail attachments
+are never converted.
 """
 
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 import json
 import os
 import shutil
@@ -37,14 +44,19 @@ from chattr.render import MAIL_SERVICE, PageSpec, Renderer
 
 PathLike = Union[str, Path]
 
-#: Audio most browsers cannot play, and the bit rate of the copy made for each.
+#: Audio filed as `.m4a`, and the bit rate each is given (voice formats low, music formats higher).
 UNPLAYABLE = {
     ".amr": "16k",
     ".awb": "24k",
     ".caf": "32k",
-    ".qta": "32k",
-    ".3gp": "32k",
-    ".3g2": "32k",
+    ".opus": "32k",
+    ".ogg": "64k",
+    ".oga": "64k",
+    ".wma": "96k",
+    ".wav": "128k",
+    ".aif": "128k",
+    ".aiff": "128k",
+    ".flac": "160k",
 }
 PLAYABLE = ".m4a"
 #: Pictures filed as JPEG, and how hard to compress them.
@@ -61,16 +73,19 @@ class Filed:
     created: list[str] = field(default_factory=list)  # files that arrived from outside it
     moved: list[tuple[str, str]] = field(default_factory=list)  # (from, to) inside it
     duplicates: int = 0  # staged files that were already filed, and so were dropped
-    playable_made: int = 0
+    shared: int = 0  # attachments that link to a copy filed for another message
+    playable_made: int = 0  # recordings filed as .m4a
     converted: int = 0  # pictures filed as JPEG
     dated: int = 0  # JPEGs given the date of their message
     unconverted: list[str] = field(default_factory=list)  # pictures that would not convert
-    unplayable: list[str] = field(default_factory=list)  # originals with no playable copy
+    unplayable: list[str] = field(default_factory=list)  # recordings left in their own format
     ffmpeg_missing: bool = False  # why: there is no ffmpeg (else the files would not convert)
 
 
 def playable_copy(original: Path) -> Optional[Path]:
-    """Where the browser-playable copy of `original` goes; None when it needs none."""
+    """Where a browser-playable copy of `original` would be; None when it needs none.
+
+    Boxes made before recordings were filed as `.m4a` keep such a copy beside the original."""
     return original.with_suffix(PLAYABLE) if original.suffix.lower() in UNPLAYABLE else None
 
 
@@ -205,7 +220,7 @@ def _staged(sha256: str, staging: list[Path]) -> Optional[tuple[Path, Path]]:
 
 
 def _transcode(original: Path, copy: Path) -> bool:
-    """Make the playable copy with ffmpeg: AAC at the original's own sample rate and channels."""
+    """Write `original` as AAC with ffmpeg, at its own sample rate and channels."""
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         return False
@@ -224,6 +239,11 @@ def _transcode(original: Path, copy: Path) -> bool:
         return False
     os.replace(part, copy)
     return True
+
+
+def _same_file(file: Path, sha256: str, out: Path, taken: dict[str, str]) -> bool:
+    """Whether the filed `file` is this attachment's content, unconverted (an earlier try)."""
+    return taken.get(file.relative_to(out).as_posix()) in (None, sha256) and _holds(file, sha256)
 
 
 def file_attachments(
@@ -247,55 +267,115 @@ def file_attachments(
     everywhere = [out, *staging]
     filed = Filed()
 
-    work = [
-        (renderer.page_of[message_id], renderer.messages[message_id], rows)
-        for message_id, rows in renderer.attachments.items()
-        if message_id in renderer.page_of
-    ]
+    work = sorted(
+        (
+            (renderer.page_of[message_id], renderer.messages[message_id], rows)
+            for message_id, rows in renderer.attachments.items()
+            if message_id in renderer.page_of
+        ),
+        key=lambda item: (item[1]["local"].replace(tzinfo=None), item[1]["id"]),
+    )
     # Where each filed attachment is now: a name is free unless other content holds it.
     taken: dict[str, str] = {}
+    # One copy of each content: the row it is filed for. An already filed copy stays where it is;
+    # otherwise the earliest message has it.
+    homes: dict[tuple[str, bool], tuple[int, int]] = {}
     for _, _, rows in work:
         for row in rows:
-            found = _locate(row["storage_path"], [out])
-            if found:
-                taken[found[0].relative_to(out).as_posix()] = row["sha256"]
+            row["_info"] = _info(row)
+    for spec, _, rows in work:
+        for row in rows:
+            key = (row["sha256"], spec.kind == "mail")
+            there = _locate(row["storage_path"], [out])
+            if there:
+                taken[there[0].relative_to(out).as_posix()] = row["sha256"]
+            if there and not row["_info"].get("shared"):
+                rank = 0
+            elif there:
+                rank = 1
+            elif _locate(row["storage_path"], staging) or _staged(row["sha256"], staging):
+                rank = 2
+            else:
+                continue
+            if key not in homes or rank < homes[key][0]:
+                homes[key] = (rank, id(row))
 
     total = sum(len(rows) for _, _, rows in work)
     done = 0
+    waiting = Counter(sha256 for sha256, _ in homes)
+    links: list[tuple[tuple[str, bool], dict[str, Any]]] = []
+    home_rows: dict[tuple[str, bool], dict[str, Any]] = {}
     for spec, message, rows in work:
         folder = _folder(spec, message["service"])
+        mail = spec.kind == "mail"
         for number, row in enumerate(rows, 1):
             done += 1
             if progress and done % 25 == 0:
                 progress(done, total)
+            key = (row["sha256"], mail)
+            if key in homes and homes[key][1] != id(row):
+                links.append((key, row))  # another message has the copy: link to it afterwards
+                continue
             found = _locate(row["storage_path"], everywhere)
-            if found is None and row.get("processing_info"):
+            if found is None and (row["_info"] or key in homes):
                 found = _staged(row["sha256"], staging)  # its filed copy has gone: file it again
             if found is None:
                 continue
+            home_rows[key] = row
             current, root = found
             inside = root == out
+            waiting[row["sha256"]] -= 1
+            if not inside and waiting[row["sha256"]] > 0:
+                # mail and a chat both carry it, and each keeps its own: leave one for the other
+                spare = current.with_name(f"{current.stem}.spare{current.suffix}")
+                shutil.copyfile(current, spare)
+                current = spare
             current_rel = current.relative_to(out).as_posix() if inside else None
+            was_rel = current_rel
             extension = current.suffix.lower()
-            was = None
-            if convert_images and not inside and spec.kind != "mail" and extension in TO_JPEG:
+            was: Optional[str] = None
+            info: dict[str, Any] = {}
+            if convert_images and not inside and not mail and extension in TO_JPEG:
                 picture = _to_jpeg(current, message["local"])
                 if picture is None:
                     filed.unconverted.append(row["original_filename"] or current.name)
                 elif isinstance(picture, Path):
                     current.unlink()
                     was, current, extension = extension, picture, ".jpg"
+                    info = {"converted_from": was, "to": ".jpg", "quality": JPEG_QUALITY}
                     filed.converted += 1
-            elif convert_images and not inside and spec.kind != "mail":
-                if extension in (".jpg", ".jpeg") and _date_jpeg(current, message["local"]):
-                    was = "dated"
+            elif convert_images and not inside and not mail and extension in (".jpg", ".jpeg"):
+                if _date_jpeg(current, message["local"]):
+                    was, info = "dated", {"date_taken": "from the message"}
                     filed.dated += 1
-            if inside and row.get("processing_info"):
+            elif make_playable and not mail and extension in UNPLAYABLE:
+                older = current.with_suffix(PLAYABLE)  # a copy an earlier version made beside it
+                made = current.with_name(current.stem + ".converted" + PLAYABLE)
+                if inside and older.is_file() and older.relative_to(out).as_posix() not in taken:
+                    os.replace(older, made)
+                if made.is_file() or _transcode(current, made):
+                    current.unlink()
+                    if current_rel:
+                        taken.pop(current_rel, None)
+                    was, current, extension = extension, made, PLAYABLE
+                    info = {"converted_from": was, "to": PLAYABLE}
+                    current_rel = None
+                    filed.playable_made += 1
+                else:
+                    filed.unplayable.append(row["original_filename"] or current.name)
+                    filed.ffmpeg_missing = filed.ffmpeg_missing or not have_ffmpeg
+            if inside and row["_info"]:
                 again = _staged(row["sha256"], staging)  # the same original, imported again
                 if again:
                     again[0].unlink()
                     _tidy(again[0].parent, again[1])
+                    filed.duplicates += 1
             stem = _stem(renderer, spec, message, row, number if len(rows) > 1 else None)
+            if was and was != "dated" and not inside:
+                # an earlier import filed it unconverted (no ffmpeg then, say): that copy goes
+                before = out / f"{folder}/{stem}{was}"
+                if before.is_file() and _same_file(before, row["sha256"], out, taken):
+                    before.unlink()
             target_rel = _free_name(out, taken, folder, stem, extension, row["sha256"], current_rel)
             target = out / target_rel
             if target_rel != current_rel:
@@ -305,8 +385,8 @@ def file_attachments(
                     filed.duplicates += 1
                 else:
                     _move(current, target)
-                    if inside:
-                        filed.moved.append((str(current_rel), target_rel))
+                    if was_rel:
+                        filed.moved.append((was_rel, target_rel))
                     else:
                         filed.created.append(target_rel)
                 if sibling and sibling.is_file():  # its playable copy goes with it
@@ -315,31 +395,54 @@ def file_attachments(
                     taken.pop(current_rel, None)
                 _tidy(current.parent, root)
                 taken[target_rel] = row["sha256"]
-                row["storage_path"] = target_rel
-                if was:
-                    row["processing_info"] = json.dumps(
-                        {"date_taken": "from the message"}
-                        if was == "dated"
-                        else {"converted_from": was, "to": ".jpg", "quality": JPEG_QUALITY}
-                    )
-                db.connection.execute(
-                    "UPDATE attachments SET storage_path = ?, processing_info = ? "
-                    "WHERE sha256 = ? AND message_id = ?",
-                    (target_rel, row.get("processing_info"), row["sha256"], row["message_id"]),
-                )
-            copy = playable_copy(target)
-            if copy is not None and copy.relative_to(out).as_posix() not in taken:
-                if copy.is_file():
-                    continue
-                if make_playable and _transcode(target, copy):
-                    filed.playable_made += 1
-                else:
-                    filed.unplayable.append(target_rel)
-                    filed.ffmpeg_missing = filed.ffmpeg_missing or not have_ffmpeg
+                _record(db, row, target_rel, info or row["_info"] or {"filed": True})
+            elif row["_info"].get("shared") or not row["_info"]:
+                kept = {k: v for k, v in row["_info"].items() if k != "shared"}
+                _record(db, row, target_rel, kept or {"filed": True})
+
+    for key, row in links:
+        home = home_rows.get(key)
+        if home is None or not _locate(home["storage_path"], [out]):
+            continue
+        own = _locate(row["storage_path"], everywhere) or _staged(row["sha256"], staging)
+        if own and own[0] != (out / home["storage_path"]).resolve():
+            relative = own[0].relative_to(out).as_posix() if own[1] == out else None
+            if relative is None or taken.get(relative) == row["sha256"]:
+                copy = playable_copy(own[0]) if relative else None
+                own[0].unlink()  # a second copy of the same thing
+                if copy and copy.is_file():
+                    copy.unlink()
+                if relative:
+                    taken.pop(relative, None)
+                _tidy(own[0].parent, own[1])
+                filed.duplicates += 1
+        filed.shared += 1
+        if row["storage_path"] != home["storage_path"] or not row["_info"].get("shared"):
+            _record(db, row, home["storage_path"], {**home["_info"], "shared": True})
     db.connection.commit()
     if progress:
         progress(total, total)
     return filed
+
+
+def _info(row: dict[str, Any]) -> dict[str, Any]:
+    """What filing recorded about this attachment before (`attachments.processing_info`)."""
+    try:
+        value = json.loads(row.get("processing_info") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _record(db: DatabaseManager, row: dict[str, Any], path: str, info: dict[str, Any]) -> None:
+    row["storage_path"] = path
+    row["_info"] = info
+    row["processing_info"] = json.dumps(info) if info else None
+    db.connection.execute(
+        "UPDATE attachments SET storage_path = ?, processing_info = ? "
+        "WHERE sha256 = ? AND message_id = ?",
+        (path, row["processing_info"], row["sha256"], row["message_id"]),
+    )
 
 
 def _holds(file: Path, sha256: str) -> bool:
