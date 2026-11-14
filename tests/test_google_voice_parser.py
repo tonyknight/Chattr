@@ -300,3 +300,65 @@ def test_a_recording_its_page_already_carries_is_not_imported_twice(
         GoogleVoiceParser().parse(fixture_family.paths["google_voice"]), "voicemail"
     )
     assert len(voicemails) == len({r.timestamp for r in voicemails})
+
+
+# --- Speech-to-text on the recordings ------------------------------------------------------------------
+
+
+def _voicemail_page(tmp_path: Path, name: str, stamp: str, google_text: str | None) -> Path:
+    stem = f"{name} - Voicemail - {stamp}"
+    said = f'<span class="full-text">{google_text}</span>' if google_text is not None else ""
+    (tmp_path / f"{stem}.html").write_text(
+        _page(
+            '<div class="haudio"><span class="fn">Voicemail from</span>'
+            f'<abbr class="published" title="2021-01-06T10:05:49.000-08:00">x</abbr>'
+            '<cite class="contributor vcard"><a class="tel" href="tel:+15550101">'
+            f'<span class="fn">{name}</span></a></cite>{said}'
+            f'<abbr class="duration" title="PT12S">(00:12)</abbr><audio controls src="{stem}.mp3">'
+            "</audio></div>"
+        )
+    )
+    recording = tmp_path / f"{stem}.mp3"
+    recording.write_bytes(f"audio of {stem}".encode())
+    return recording
+
+
+def test_voicemail_recordings_are_transcribed_when_asked(tmp_path: Path) -> None:
+    from chattr.transcription import StubTranscriber
+
+    first = _voicemail_page(tmp_path, "Ana", "2021-01-06T18_05_49Z", "googles gess at it")
+    second = _voicemail_page(tmp_path, "Ana", "2021-01-07T18_05_49Z", None)
+    loose = tmp_path / "Rui - Voicemail - 2021-01-08T18_05_49Z.mp3"
+    loose.write_bytes(b"audio with no page")
+    stub = StubTranscriber({first.name: "Hi, call me back.", second.name: "Olá!", loose.name: " "})
+    records = _all(GoogleVoiceParser(transcriber=stub).parse(tmp_path))
+    one, two, three = records
+    assert sorted(p.name for p in stub.calls) == sorted([first.name, second.name, loose.name])
+    assert one.transcript == "Hi, call me back."  # the local model's, not Google's
+    assert one.service_specific["google_transcript"] == "googles gess at it"
+    assert one.service_specific["transcript_model"] == "stub"
+    assert two.transcript == "Olá!" and "google_transcript" not in two.service_specific
+    assert three.transcript is None  # nothing was said: no transcript, and no error either
+
+
+def test_a_recording_that_cannot_be_transcribed_keeps_googles_words(tmp_path: Path) -> None:
+    from chattr.transcription import Transcript
+
+    _voicemail_page(tmp_path, "Ana", "2021-01-06T18_05_49Z", "what Google heard")
+
+    class Broken:
+        def transcribe(self, audio: Path) -> Transcript:
+            raise RuntimeError("the model would not load")
+
+    (record,) = _all(GoogleVoiceParser(transcriber=Broken()).parse(tmp_path))
+    assert record.transcript == "what Google heard"
+    assert record.service_specific["transcription_error"] == "the model would not load"
+
+
+def test_without_a_transcriber_googles_words_are_the_transcript(tmp_path: Path) -> None:
+    _voicemail_page(tmp_path, "Ana", "2021-01-06T18_05_49Z", "what Google heard")
+    (record,) = _all(GoogleVoiceParser().parse(tmp_path))
+    assert (
+        record.transcript == "what Google heard"
+        and "google_transcript" not in record.service_specific
+    )

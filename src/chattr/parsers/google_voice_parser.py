@@ -17,6 +17,10 @@ calls and voicemails share one timeline. Google writes one page per day of texti
   links them without the extension; "MMS Received"/"MMS Sent" is Google's placeholder for a
   message that was only a picture, not something anyone said;
 - a voicemail recording whose page is missing is imported from its file name alone.
+
+With a `transcriber`, every voicemail recording is put through local speech-to-text and that text
+becomes the transcript; what Google wrote, when the page has it, is kept beside it
+(`google_transcript`) and stays the transcript if the local model fails or hears nothing.
  Times keep the offset the page states. "Me" is the owner:
 owner records have no sender handle. Voicemail audio is stored by content hash when an
 `attachments_dir` is given, whatever the file's extension.
@@ -42,6 +46,7 @@ from chattr import blobs
 from chattr.parsers.base_parser import BaseParser
 from chattr.parsers.batch import ConversationBatch
 from chattr.records import AttachmentRecord, ConversationRecord, MessageRecord
+from chattr.transcription import Transcriber, transcribe_all
 
 SERVICE = "Google Voice"
 PathLike = Union[str, Path]
@@ -194,7 +199,9 @@ class GoogleVoiceParser(BaseParser):
         owner: Optional[str] = None,
         aliases: Optional[dict[str, str]] = None,
         attachments_dir: Optional[PathLike] = None,
+        transcriber: Optional[Transcriber] = None,
     ) -> None:
+        self.transcriber = transcriber
         self.owner = owner
         self.aliases = aliases or {}
         self.attachments_dir = Path(attachments_dir) if attachments_dir else None
@@ -208,10 +215,13 @@ class GoogleVoiceParser(BaseParser):
         grouped: dict[str, list[tuple[_Person, MessageRecord]]] = {}
         names: dict[str, dict[str, Optional[str]]] = {}
         self._used: set[Path] = set()
+        self._recordings: dict[int, Path] = {}  # a voicemail record (by identity) → its audio
         found: list[tuple[list[_Person], MessageRecord]] = []
         for page in sorted(folder.rglob("*.html")):
             found.extend(self._page(page))
         found.extend(self._loose_voicemail(folder))
+        if self.transcriber:
+            found = self._transcribed(found)
         # A name that always goes with one number stands for that number where only the name is
         # known (a page on which only the owner wrote).
         numbers: dict[str, set[str]] = {}
@@ -257,6 +267,33 @@ class GoogleVoiceParser(BaseParser):
                 )
             )
         return sorted(batches, key=lambda b: b.records[0].timestamp)
+
+    def _transcribed(
+        self, found: list[tuple[list[_Person], MessageRecord]]
+    ) -> list[tuple[list[_Person], MessageRecord]]:
+        """Put every voicemail recording through the local speech-to-text model."""
+        assert self.transcriber is not None
+        audio = {id(record): self._recordings[id(record)] for _, record in found
+                 if id(record) in self._recordings}  # fmt: skip
+        outcomes = transcribe_all(self.transcriber, list(audio.values()))
+        result = []
+        for people, record in found:
+            outcome = outcomes.get(audio[id(record)]) if id(record) in audio else None
+            if outcome is not None:
+                extras = dict(record.service_specific or {})
+                heard = outcome.transcript.text.strip() if outcome.transcript else ""
+                if heard and outcome.transcript:
+                    if record.transcript:
+                        extras["google_transcript"] = record.transcript
+                    extras["transcript_model"] = outcome.transcript.model
+                    if outcome.transcript.language:
+                        extras["transcript_language"] = outcome.transcript.language
+                    record = dataclasses.replace(record, transcript=heard, service_specific=extras)
+                elif outcome.error:
+                    extras["transcription_error"] = outcome.error
+                    record = dataclasses.replace(record, service_specific=extras)
+            result.append((people, record))
+        return result
 
     # --- One page ---------------------------------------------------------------------------
 
@@ -387,6 +424,7 @@ class GoogleVoiceParser(BaseParser):
                 content_type="voicemail",
                 attachments=(self._file(path),),
             )
+            self._recordings[id(record)] = path
             result.append(([caller], record))
         return result
 
@@ -418,6 +456,8 @@ class GoogleVoiceParser(BaseParser):
                 service_specific={k: v for k, v in extras.items() if v is not None},
                 attachments=self._voicemail_audio(audio, page),
             )
+            if self._last_audio is not None:
+                self._recordings[id(record)] = self._last_audio
         else:
             from_owner = kind == "placed"
             extras = {"direction": kind, "duration_seconds": duration}
@@ -446,7 +486,9 @@ class GoogleVoiceParser(BaseParser):
         for path in candidates:
             if path.is_file():
                 self._used.add(path)
+                self._last_audio: Optional[Path] = path
                 return (self._file(path),)
+        self._last_audio = None
         return ()
 
     def _file(self, path: Path) -> AttachmentRecord:

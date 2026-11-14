@@ -262,7 +262,8 @@ def _convert_batches(
     name, parser_class = SERVICES[key]
     folder = output_folder(settings, OUTPUT_FOLDERS[key])
     roots = attachment_roots(settings, [attachments_dir] if attachments_dir else [])
-    options: dict[str, Any] = {"transcriber": transcriber} if key == "voicemail" else {}
+    hears = key in ("voicemail", "googlevoice")  # the sources with recordings to transcribe
+    options: dict[str, Any] = {"transcriber": transcriber} if hears else {}
     parser = parser_class(
         owner=owner,
         aliases=_aliases_mapping(aliases),
