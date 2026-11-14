@@ -359,7 +359,7 @@ def test_a_recording_attached_to_mail_is_never_converted(archive: Archive) -> No
     assert kept.endswith("message.amr") and (archive.out / kept).read_bytes() == amr(1)
 
 
-def test_audio_a_browser_already_plays_is_not_copied(archive: Archive) -> None:
+def _recording(archive: Archive, data: bytes, suffix: str) -> None:
     archive.add(
         ConversationRecord("Google Voice", ANA, name=ANA, participants=(ANA,)),
         MessageRecord(
@@ -367,11 +367,51 @@ def test_audio_a_browser_already_plays_is_not_copied(archive: Archive) -> None:
             sender=ANA,
             sender_name=ANA,
             content_type="voicemail",
-            attachments=(_blob(archive.staging, b"ID3 mp3", ".mp3"),),
+            attachments=(_blob(archive.staging, data, suffix),),
         ),
     )
+
+
+def _mp3(tmp_path: Path, rate: str) -> bytes | None:
+    import subprocess
+
+    out = tmp_path / f"made-{rate}.mp3"
+    made = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050",
+         "-t", "3", "-c:a", "libmp3lame", "-b:a", rate, str(out)], capture_output=True,
+    )  # fmt: skip
+    return out.read_bytes() if made.returncode == 0 else None
+
+
+@needs_ffmpeg
+def test_an_mp3_is_filed_as_m4a_at_about_its_own_size(archive: Archive, tmp_path: Path) -> None:
+    mp3 = _mp3(tmp_path, "32k")
+    if mp3 is None:
+        pytest.skip("this ffmpeg cannot write MP3")
+    _recording(archive, mp3, ".mp3")
+    filed = archive.file()
+    wanted = f"People/{ANA}/Google Voice/(2018-09-08) 10-22-45 {ANA}.m4a"
+    assert archive.files() == [wanted] and filed.playable_made == 1
+    size = (archive.out / wanted).stat().st_size
+    assert 0.4 * len(mp3) < size < 1.6 * len(mp3)  # its own bit rate, not a fixed one
+
+
+def test_an_mp3_that_cannot_be_converted_is_filed_as_it_is_without_a_warning(
+    archive: Archive,
+) -> None:
+    _recording(archive, b"ID3 not really an mp3", ".mp3")
     filed = archive.file()
     assert archive.files() == [f"People/{ANA}/Google Voice/(2018-09-08) 10-22-45 {ANA}.mp3"]
+    assert filed.playable_made == 0 and filed.unplayable == []  # it still plays as it is
+    page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
+    assert "cannot play" not in page
+
+
+def test_an_m4a_is_left_exactly_as_it_is(archive: Archive) -> None:
+    _recording(archive, b"....ftypM4A not really", ".m4a")
+    filed = archive.file()
+    (kept,) = archive.files()
+    assert (archive.out / kept).read_bytes() == b"....ftypM4A not really"
     assert filed.playable_made == 0 and filed.unplayable == []
 
 

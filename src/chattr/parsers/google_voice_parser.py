@@ -7,7 +7,17 @@ voicemails). The kind in the file name (`<name> - Text|Received|Placed|Missed|Vo
 is authoritative; the page's own wording is the fallback.
 
 A conversation is the counterpart (or the set of counterparts of a group), so one person's texts,
-calls and voicemails share one timeline. Times keep the offset the page states. "Me" is the owner:
+calls and voicemails share one timeline. Google writes one page per day of texting, so:
+
+- a day on which only the owner wrote names nobody inside the page; the counterpart comes from the
+  file name and is matched to the number that name has on other pages;
+- a group page lists its members (`participants`), and those, not whoever happened to write that
+  day, are the conversation;
+- pictures and videos sent by text sit beside the page (`<page name>-<n>-<m>.jpg`) and the page
+  links them without the extension; "MMS Received"/"MMS Sent" is Google's placeholder for a
+  message that was only a picture, not something anyone said;
+- a voicemail recording whose page is missing is imported from its file name alone.
+ Times keep the offset the page states. "Me" is the owner:
 owner records have no sender handle. Voicemail audio is stored by content hash when an
 `attachments_dir` is given, whatever the file's extension.
 
@@ -16,6 +26,8 @@ The page is read with a small tree built on the standard library's `html.parser`
 
 from __future__ import annotations
 
+import dataclasses
+import glob
 import hashlib
 import mimetypes
 import re
@@ -24,6 +36,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterator, Optional, Union
+from urllib.parse import unquote
 
 from chattr import blobs
 from chattr.parsers.base_parser import BaseParser
@@ -47,6 +60,9 @@ _LABELS = (
     ("voicemail", "voicemail"),
 )
 _AUDIO_SUFFIXES = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".amr", ".opus")
+_PLACEHOLDERS = {"mms received", "mms sent"}
+_NUMBER = re.compile(r"^\+?[\d\s().-]{6,}$")
+_STAMP = re.compile(r"^(\d{4}-\d\d-\d\d)T(\d\d)_(\d\d)_(\d\d)Z$")
 _DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
 
@@ -166,6 +182,10 @@ def _person(vcard: Optional[Node]) -> _Person:
     return _Person(number, name or None)
 
 
+def _with_sender(record: MessageRecord, number: Optional[str]) -> MessageRecord:
+    return dataclasses.replace(record, sender=number) if number else record
+
+
 class GoogleVoiceParser(BaseParser):
     """Parse a Google Voice Takeout folder into conversations of texts, calls and voicemails."""
 
@@ -187,18 +207,38 @@ class GoogleVoiceParser(BaseParser):
             raise FileNotFoundError(folder)
         grouped: dict[str, list[tuple[_Person, MessageRecord]]] = {}
         names: dict[str, dict[str, Optional[str]]] = {}
+        self._used: set[Path] = set()
+        found: list[tuple[list[_Person], MessageRecord]] = []
         for page in sorted(folder.rglob("*.html")):
-            for counterparts, record in self._page(page):
-                key = (
-                    ",".join(sorted(p.number or p.name or "unknown" for p in counterparts))
-                    or "unknown"
-                )
-                grouped.setdefault(key, []).append(
-                    (counterparts[0] if counterparts else _Person(None, None), record)
-                )
-                bucket = names.setdefault(key, {})
-                for person in counterparts:
-                    bucket.setdefault(person.number or person.name or "unknown", person.name)
+            found.extend(self._page(page))
+        found.extend(self._loose_voicemail(folder))
+        # A name that always goes with one number stands for that number where only the name is
+        # known (a page on which only the owner wrote).
+        numbers: dict[str, set[str]] = {}
+        for counterparts, _ in found:
+            for person in counterparts:
+                if person.number and person.name:
+                    numbers.setdefault(person.name.casefold(), set()).add(person.number)
+        for counterparts, record in found:
+            for person in counterparts:
+                if person.number is None and person.name:
+                    known = numbers.get(person.name.casefold(), set())
+                    if _NUMBER.match(person.name):
+                        person.number, person.name = re.sub(r"[^\d+]", "", person.name), None
+                    elif len(known) == 1:
+                        person.number = next(iter(known))
+                    if record.content_type == "voicemail" and record.sender is None:
+                        record = _with_sender(record, person.number)
+            key = (
+                ",".join(sorted(p.number or p.name or "unknown" for p in counterparts)) or "unknown"
+            )
+            grouped.setdefault(key, []).append(
+                (counterparts[0] if counterparts else _Person(None, None), record)
+            )
+            bucket = names.setdefault(key, {})
+            for person in counterparts:
+                who = person.number or person.name or "unknown"
+                bucket[who] = bucket.get(who) or person.name
         batches = []
         for key, items in grouped.items():
             records = sorted((r for _, r in items), key=lambda r: r.timestamp)
@@ -228,7 +268,7 @@ class GoogleVoiceParser(BaseParser):
         hint = self._kind_from_name(page)
         log = tree.find(cls="hChatLog")
         if log is not None:
-            return self._texts(log, page)
+            return self._texts(log, page, tree.find(cls="participants"))
         audio = tree.find(cls="haudio")
         if audio is not None:
             return self._call(audio, page, hint)
@@ -245,7 +285,9 @@ class GoogleVoiceParser(BaseParser):
     def _owner_name(self) -> str:
         return self.owner or "Me"
 
-    def _texts(self, log: Node, page: Path) -> list[tuple[list[_Person], MessageRecord]]:
+    def _texts(
+        self, log: Node, page: Path, members: Optional[Node] = None
+    ) -> list[tuple[list[_Person], MessageRecord]]:
         entries = []
         for message in log.find_all(cls="message"):
             when = _moment((message.find(cls="dt") or Node("x")).attrs.get("title"))
@@ -255,6 +297,10 @@ class GoogleVoiceParser(BaseParser):
                 continue
             entries.append((sender, when, quote.text().strip() if quote else "", message))
         counterparts: dict[str, _Person] = {}
+        for card in members.find_all(cls="vcard") if members is not None else []:
+            member = _person(card)  # a group's members, whoever wrote on this page
+            if not member.is_owner and (member.number or member.name):
+                counterparts.setdefault(member.number or member.name or "unknown", member)
         for sender, *_ in entries:
             if not sender.is_owner:
                 counterparts.setdefault(sender.number or sender.name or "unknown", sender)
@@ -264,6 +310,9 @@ class GoogleVoiceParser(BaseParser):
         people = list(counterparts.values())
         result = []
         for sender, when, text, message in entries:
+            files = self._pictures(message, page)
+            if files and text.strip().casefold() in _PLACEHOLDERS:
+                text = ""
             result.append(
                 (
                     people,
@@ -278,20 +327,68 @@ class GoogleVoiceParser(BaseParser):
                         body=text or None,
                         content_type="text",
                         is_from_owner=sender.is_owner,
-                        attachments=self._pictures(message, page),
+                        attachments=files,
                     ),
                 )
             )
         return result
 
     def _pictures(self, message: Node, page: Path) -> tuple[AttachmentRecord, ...]:
+        """The pictures, videos and other files a text carried."""
         found = []
-        for node in message.find_all("img") + message.find_all("a", "photo"):
+        nodes = message.find_all("img") + message.find_all("a", "photo")
+        nodes += message.find_all("a", "video") + message.find_all("a", "vcard")
+        nodes += message.find_all("audio")
+        for node in nodes:
             source = node.attrs.get("src") or node.attrs.get("href") or ""
-            path = page.parent / source if source else None
-            if path and path.is_file():
+            path = self._beside(page, source)
+            if path and path not in self._used:
+                self._used.add(path)
                 found.append(self._file(path))
         return tuple(found)
+
+    @staticmethod
+    def _beside(page: Path, source: str) -> Optional[Path]:
+        """The file a page links: Google leaves the extension off, and may escape the name."""
+        if not source or "://" in source:
+            return None
+        for name in dict.fromkeys((source, unquote(source))):
+            exact = page.parent / name
+            if exact.is_file():
+                return exact
+            matches = sorted(
+                f
+                for f in page.parent.glob(glob.escape(name) + ".*")
+                if f.is_file() and f.suffix.lower() != ".html"
+            )
+            if matches:
+                return matches[0]
+        return None
+
+    def _loose_voicemail(self, folder: Path) -> list[tuple[list[_Person], MessageRecord]]:
+        """Voicemail recordings that no page carried, read from their names:
+        `Mary Afraimi - Voicemail - 2021-01-06T18_05_49Z.mp3`."""
+        result = []
+        for path in sorted(p for p in folder.rglob("*") if p.suffix.lower() in _AUDIO_SUFFIXES):
+            parts = path.stem.split(" - ")
+            stamp = _STAMP.match(parts[-1]) if len(parts) >= 3 else None
+            if path in self._used or not stamp or parts[-2].strip().lower() != "voicemail":
+                continue
+            when = _moment(f"{stamp[1]}T{stamp[2]}:{stamp[3]}:{stamp[4]}+00:00")
+            label = " - ".join(parts[:-2]).strip()
+            if when is None or not label:
+                continue
+            self._used.add(path)
+            caller = _Person(None, label)
+            record = MessageRecord(
+                timestamp=when,
+                sender=None,
+                sender_name=self._name(None, label),
+                content_type="voicemail",
+                attachments=(self._file(path),),
+            )
+            result.append(([caller], record))
+        return result
 
     def _call(
         self, audio: Node, page: Path, hint: Optional[str]
@@ -348,6 +445,7 @@ class GoogleVoiceParser(BaseParser):
         candidates += [page.with_suffix(suffix) for suffix in _AUDIO_SUFFIXES]
         for path in candidates:
             if path.is_file():
+                self._used.add(path)
                 return (self._file(path),)
         return ()
 

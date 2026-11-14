@@ -142,8 +142,16 @@ def offline_only() -> Iterator[None]:
 
 
 def transcribe_all(transcriber: Transcriber, files: Iterable[Path]) -> dict[Path, Outcome]:
-    """Transcribe each file with the network blocked; one failure never stops the rest."""
+    """Transcribe each file with the network blocked; one failure never stops the rest.
+
+    A transcriber that has an `expect(count)` method is told how many files are coming, so one
+    that reports progress can say "3 of 40".
+    """
     outcomes: dict[Path, Outcome] = {}
+    files = list(files)
+    expect = getattr(transcriber, "expect", None)
+    if callable(expect):
+        expect(len(files))
     for audio in files:
         try:
             with offline_only():

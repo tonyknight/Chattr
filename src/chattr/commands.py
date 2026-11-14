@@ -167,9 +167,12 @@ def people(
     aliases: Optional[PathLike] = None,
     contacts: Optional[PathLike] = None,
     region: Optional[str] = None,
+    mac_contacts: Union[PathLike, bool, None] = None,
 ) -> PeopleResult:
-    """Resolve every handle in the central archive with these inputs; report what's unnamed."""
-    resolver = make_resolver(settings, owner, aliases, contacts, region)
+    """Resolve every handle in the central archive with these inputs; report what's unnamed.
+
+    `mac_contacts`: also name people from this Mac's Contacts (True, or the folder to read)."""
+    resolver = make_resolver(settings, owner, aliases, contacts, region, mac_contacts)
     if not central_database(settings).exists():
         return PeopleResult()
     with DatabaseManager(central_database(settings)) as db:

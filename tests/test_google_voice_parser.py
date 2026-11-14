@@ -184,3 +184,119 @@ def test_a_voicemail_without_audio_still_imports(tmp_path: Path) -> None:
 def test_a_missing_folder_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         GoogleVoiceParser().parse(tmp_path / "nothing")
+
+
+# --- What a real Takeout does that the first fixture did not ----------------------------------------
+
+
+def _mms(when: str, tel: str, name: str, inner: str, text: str = "MMS Received") -> str:
+    return (
+        f'<div class="message"><abbr class="dt" title="{when}">x</abbr>: '
+        f'<cite class="sender vcard"><a class="tel" href="tel:{tel}"><abbr class="fn" title="">{name}'
+        f"</abbr></a></cite>: <q>{text}</q><div>{inner}</div></div>"
+    )
+
+
+def test_a_picture_is_found_though_the_page_leaves_off_its_extension(tmp_path: Path) -> None:
+    stem = "Stella Ellis - Text - 2019-09-15T23_14_04Z"
+    (tmp_path / f"{stem}-27-1.jpg").write_bytes(b"a jpeg")
+    picture = f'<img src="{stem}-27-1" alt="Image MMS Attachment" />'
+    body = _mms("2019-09-15T16:14:04.000-07:00", "+15550107", "Stella Ellis", picture)
+    (tmp_path / f"{stem}.html").write_text(_page(f'<div class="hChatLog hfeed">{body}</div>'))
+    (record,) = _all(GoogleVoiceParser().parse(tmp_path))
+    (photo,) = record.attachments
+    assert photo.original_filename == f"{stem}-27-1.jpg" and photo.mime_type == "image/jpeg"
+    assert photo.sha256 == hashlib.sha256(b"a jpeg").hexdigest()
+    assert record.body is None  # "MMS Received" is Google's placeholder, not something said
+
+
+def test_a_video_and_text_sent_with_a_picture_are_kept(tmp_path: Path) -> None:
+    stem = "Ana - Text - 2020-01-02T08_04_05Z"
+    (tmp_path / f"{stem}-1-1.mp4").write_bytes(b"a video")
+    (tmp_path / f"{stem}-2-1.jpg").write_bytes(b"a jpeg")
+    video = f'<a class="video" href="{stem}-1-1">Video MMS Attachment</a>'
+    picture = f'<img src="{stem}-2-1" alt="Image MMS Attachment" />'
+    body = _mms("2020-01-02T03:04:05.000-05:00", "+15550101", "Ana", video) + _mms(
+        "2020-01-02T03:05:05.000-05:00", "+15550101", "Ana", picture, "Look at this"
+    )
+    (tmp_path / f"{stem}.html").write_text(_page(f'<div class="hChatLog hfeed">{body}</div>'))
+    first, second = _all(GoogleVoiceParser().parse(tmp_path))
+    assert [a.original_filename for a in first.attachments] == [f"{stem}-1-1.mp4"]
+    assert second.body == "Look at this" and len(second.attachments) == 1
+
+
+def test_a_day_when_only_i_wrote_joins_the_same_conversation(tmp_path: Path) -> None:
+    theirs = _text_message(
+        "2015-01-25T12:03:49.000-08:00", "+15550103", "Todd Suzanski", "I am here"
+    )
+    mine = _text_message("2015-01-26T13:27:02.000-08:00", "+15550000", "Me", "How did it go?")
+    for day, body in (("2015-01-25T20_03_49Z", theirs), ("2015-01-26T21_27_02Z", mine)):
+        (tmp_path / f"Todd Suzanski - Text - {day}.html").write_text(
+            _page(f'<div class="hChatLog hfeed">{body}</div>')
+        )
+    (batch,) = GoogleVoiceParser(owner="Maria Costa").parse(tmp_path)
+    assert batch.conversation.participants == ("+15550103",)
+    assert [(r.sender_name, r.is_from_owner) for r in batch.records] == [
+        ("Todd Suzanski", False),
+        ("Maria Costa", True),
+    ]
+
+
+def test_a_page_named_for_a_number_where_only_i_wrote(tmp_path: Path) -> None:
+    mine = _text_message("2015-01-26T13:27:02.000-08:00", "+15550000", "Me", "Hello?")
+    (tmp_path / "+15550103 - Text - 2015-01-26T21_27_02Z.html").write_text(
+        _page(f'<div class="hChatLog hfeed">{mine}</div>')
+    )
+    (batch,) = GoogleVoiceParser().parse(tmp_path)
+    assert batch.conversation.participants == ("+15550103",)
+
+
+def test_a_group_is_one_conversation_whoever_wrote_that_day(tmp_path: Path) -> None:
+    def card(tel: str, name: str) -> str:
+        return f'<cite class="sender vcard"><a class="tel" href="tel:{tel}"><span class="fn">{name}</span></a></cite>'
+
+    members = (
+        '<div class="participants">Group conversation with: '
+        f'{card("+15550101", "Ana")}, {card("+15550102", "Rui")}</div>'
+    )
+    days = (
+        (
+            "2020-01-02T08_04_05Z",
+            _text_message("2020-01-02T03:04:05.000-05:00", "+15550101", "Ana", "hi"),
+        ),
+        (
+            "2020-01-03T08_04_05Z",
+            _text_message("2020-01-03T03:04:05.000-05:00", "+15550102", "Rui", "yo"),
+        ),
+        (
+            "2020-01-04T08_04_05Z",
+            _text_message("2020-01-04T03:04:05.000-05:00", "+15550000", "Me", "ok"),
+        ),
+    )
+    for day, body in days:
+        (tmp_path / f"Group Conversation - {day}.html").write_text(
+            _page(f'{members}<div class="hChatLog hfeed">{body}</div>')
+        )
+    (batch,) = GoogleVoiceParser().parse(tmp_path)
+    assert batch.conversation.type == "group" and len(batch.records) == 3
+    assert set(batch.conversation.participants) == {"+15550101", "+15550102"}
+
+
+def test_a_voicemail_recording_with_no_page_is_still_imported(tmp_path: Path) -> None:
+    (tmp_path / "Mary Afraimi - Voicemail - 2021-01-06T18_05_49Z.mp3").write_bytes(b"ID3 audio")
+    (tmp_path / "Mary Afraimi - Received - 2021-01-05T10_00_00Z.mp3").write_bytes(b"not voicemail")
+    (record,) = _all(GoogleVoiceParser().parse(tmp_path))
+    assert record.content_type == "voicemail" and record.sender_name == "Mary Afraimi"
+    assert record.timestamp == datetime(2021, 1, 6, 18, 5, 49, tzinfo=timezone.utc)
+    assert [a.original_filename for a in record.attachments] == [
+        "Mary Afraimi - Voicemail - 2021-01-06T18_05_49Z.mp3"
+    ]
+
+
+def test_a_recording_its_page_already_carries_is_not_imported_twice(
+    fixture_family: FamilyExports,
+) -> None:
+    voicemails = _by_type(
+        GoogleVoiceParser().parse(fixture_family.paths["google_voice"]), "voicemail"
+    )
+    assert len(voicemails) == len({r.timestamp for r in voicemails})

@@ -18,7 +18,8 @@ picture itself. Mail attachments are never converted: there the file itself is t
 Audio is filed as `.m4a` (AAC), which every browser plays: voicemail (`.amr`), voice notes (`.caf`,
 `.opus`) and the other formats in `UNPLAYABLE` are transcoded with ffmpeg and only the `.m4a` is
 kept, as with pictures. Without ffmpeg the original is filed and the gap reported; importing again
-once ffmpeg is installed converts it. MP3 and M4A already play and are left alone.
+once ffmpeg is installed converts it. MP3 is converted too, so that every recording in the archive
+is one format; it keeps its own bit rate (128 kbit/s at most). M4A is left alone.
 
 A file is stored once. When the same content (the same SHA-256) is attached to several messages (a
 sticker sent fifty times, a photo sent to three people), it is filed for the earliest of them and
@@ -59,6 +60,10 @@ UNPLAYABLE = {
     ".flac": "160k",
 }
 PLAYABLE = ".m4a"
+#: Audio that plays as it is but is filed as `.m4a` all the same, to keep one format: its bit rate
+#: is the original's own, between these limits.
+ALSO_M4A = frozenset({".mp3"})
+_LOWEST_RATE, _HIGHEST_RATE, _USUAL_RATE = 24_000, 128_000, 64_000
 #: Pictures filed as JPEG, and how hard to compress them.
 TO_JPEG = frozenset({".heic", ".heif", ".png", ".webp"})
 JPEG_QUALITY = 85
@@ -219,6 +224,23 @@ def _staged(sha256: str, staging: list[Path]) -> Optional[tuple[Path, Path]]:
     return None
 
 
+def _own_rate(original: Path) -> str:
+    """The bit rate to give an MP3's `.m4a`: its own (ffprobe says), within the limits."""
+    rate = _USUAL_RATE
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        command = [
+            ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+            "stream=bit_rate:format=bit_rate", "-of", "default=nw=1:nk=1", str(original),
+        ]  # fmt: skip
+        try:
+            said = subprocess.run(command, capture_output=True, text=True, timeout=60).stdout
+            rate = next(int(line) for line in said.split() if line.isdigit())
+        except (OSError, subprocess.SubprocessError, StopIteration):
+            pass
+    return str(max(_LOWEST_RATE, min(_HIGHEST_RATE, rate)))
+
+
 def _transcode(original: Path, copy: Path) -> bool:
     """Write `original` as AAC with ffmpeg, at its own sample rate and channels."""
     ffmpeg = shutil.which("ffmpeg")
@@ -227,7 +249,7 @@ def _transcode(original: Path, copy: Path) -> bool:
     part = copy.with_name(copy.stem + ".part" + copy.suffix)
     command = [
         ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(original), "-vn",
-        "-c:a", "aac", "-b:a", UNPLAYABLE[original.suffix.lower()],
+        "-c:a", "aac", "-b:a", UNPLAYABLE.get(original.suffix.lower()) or _own_rate(original),
         "-movflags", "+faststart", str(part),
     ]  # fmt: skip
     try:
@@ -348,7 +370,7 @@ def file_attachments(
                 if _date_jpeg(current, message["local"]):
                     was, info = "dated", {"date_taken": "from the message"}
                     filed.dated += 1
-            elif make_playable and not mail and extension in UNPLAYABLE:
+            elif make_playable and not mail and (extension in UNPLAYABLE or extension in ALSO_M4A):
                 older = current.with_suffix(PLAYABLE)  # a copy an earlier version made beside it
                 made = current.with_name(current.stem + ".converted" + PLAYABLE)
                 if inside and older.is_file() and older.relative_to(out).as_posix() not in taken:
@@ -361,7 +383,7 @@ def file_attachments(
                     info = {"converted_from": was, "to": PLAYABLE}
                     current_rel = None
                     filed.playable_made += 1
-                else:
+                elif extension in UNPLAYABLE:  # (an MP3 left as it is still plays)
                     filed.unplayable.append(row["original_filename"] or current.name)
                     filed.ffmpeg_missing = filed.ffmpeg_missing or not have_ffmpeg
             if inside and row["_info"]:
