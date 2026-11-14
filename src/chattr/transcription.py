@@ -23,6 +23,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional, Protocol, Union
@@ -152,6 +153,20 @@ def transcribe_all(transcriber: Transcriber, files: Iterable[Path]) -> dict[Path
     expect = getattr(transcriber, "expect", None)
     if callable(expect):
         expect(len(files))
+    many = getattr(transcriber, "transcribe_many", None)
+    if callable(many):  # an engine that takes them all at once (the model is loaded once)
+        try:
+            with offline_only():
+                for audio, result in many(files):
+                    outcomes[audio] = (
+                        Outcome(transcript=result)
+                        if isinstance(result, Transcript)
+                        else Outcome(error=str(result) or type(result).__name__)
+                    )
+        except Exception as error:  # the run itself could not go on
+            for audio in files:
+                outcomes.setdefault(audio, Outcome(error=str(error) or type(error).__name__))
+        return outcomes
     for audio in files:
         try:
             with offline_only():
@@ -167,7 +182,12 @@ def transcribe_all(transcriber: Transcriber, files: Iterable[Path]) -> dict[Path
 
 
 class WhisperCppTranscriber:
-    """Runs a local whisper.cpp `whisper-cli` on a local model file."""
+    """Runs a local whisper.cpp `whisper-cli` on a local model file.
+
+    Several recordings go to one run of the program (`transcribe_many`), so the model, which for a
+    large one takes longer to load than a short voicemail takes to transcribe, is loaded once and
+    not once per recording. A long list is split into runs of `batch` recordings.
+    """
 
     def __init__(
         self,
@@ -176,7 +196,9 @@ class WhisperCppTranscriber:
         language: Optional[str] = None,
         ffmpeg: str = "ffmpeg",
         timeout: int = 900,
+        batch: int = 100,
     ) -> None:
+        self.batch = max(1, batch)
         self.model = Path(model_path).expanduser()
         if not self.model.is_file():
             raise TranscriptionUnavailable(
@@ -194,25 +216,118 @@ class WhisperCppTranscriber:
         self.ffmpeg = ffmpeg
         self.timeout = timeout
 
-    def transcribe(self, audio: Path) -> Transcript:
+    def _ffmpeg(self) -> str:
         ffmpeg = shutil.which(self.ffmpeg)
         if ffmpeg is None:
             raise TranscriptionUnavailable(
                 "ffmpeg is required to prepare audio for whisper.cpp but was not found."
             )
+        return ffmpeg
+
+    @staticmethod
+    def _prepare(ffmpeg: str, audio: Path, prepared: Path) -> None:
+        """Write `audio` as the 16 kHz mono WAV whisper.cpp reads."""
+        converted = subprocess.run(
+            [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(audio), "-ar", "16000",
+             "-ac", "1", "-c:a", "pcm_s16le", str(prepared)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )  # fmt: skip
+        if converted.returncode != 0 or not prepared.is_file():
+            raise TranscriptionError(
+                f"Could not read the audio {audio.name}: {converted.stderr.strip()[:200]}"
+            )
+
+    def transcribe_many(
+        self, files: Iterable[Path], poll: float = 0.1
+    ) -> Iterator[tuple[Path, Union[Transcript, Exception]]]:
+        """Transcribe the files in as few runs of whisper.cpp as possible, yielding each result
+        as soon as the program has written it (so progress can be shown while a run goes on).
+
+        A recording the run did not finish (the program failed on it, or died) is tried again
+        on its own, which also gives it an error message of its own.
+        """
+        ffmpeg = self._ffmpeg()
+        files = list(files)
+        for start in range(0, len(files), self.batch):
+            yield from self._run(ffmpeg, files[start : start + self.batch], poll)
+
+    def _run(
+        self, ffmpeg: str, files: list[Path], poll: float
+    ) -> Iterator[tuple[Path, Union[Transcript, Exception]]]:
+        with tempfile.TemporaryDirectory(prefix="chattr-stt-") as folder:
+            ready: list[tuple[Path, Path, Path]] = []  # (recording, its WAV, where its text goes)
+            for number, audio in enumerate(files):
+                prepared = Path(folder) / f"{number:05d}.wav"
+                try:
+                    self._prepare(ffmpeg, audio, prepared)
+                except TranscriptionError as error:
+                    yield audio, error
+                    continue
+                ready.append((audio, prepared, Path(folder) / f"{number:05d}"))
+            if len(ready) < 2:
+                for audio, _, _ in ready:
+                    yield audio, self._alone(audio)
+                return
+            command = [self.executable, "-m", str(self.model), "-nt", "-np", "-otxt",
+                       "-l", self.language or "auto"]  # fmt: skip
+            for _, prepared, text in ready:
+                command += ["-f", str(prepared), "-of", str(text)]
+            deadline = time.monotonic() + self.timeout * len(ready)
+            done = 0
+            with open(Path(folder) / "whisper.log", "wb") as log:
+                process = subprocess.Popen(command, stdout=log, stderr=log)
+                try:
+                    while done < len(ready):
+                        written = self._written(ready[done])
+                        if written is not None:
+                            time.sleep(min(poll, 0.05))  # let the program finish writing it
+                            yield ready[done][0], self._transcript(written)
+                            done += 1
+                        elif process.poll() is not None:
+                            break
+                        elif time.monotonic() > deadline:
+                            process.kill()
+                            break
+                        else:
+                            time.sleep(poll)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+            for entry in ready[done:]:  # what the run left: written late, or not at all
+                written = self._written(entry)
+                yield entry[0], (
+                    self._transcript(written) if written is not None else self._alone(entry[0])
+                )
+
+    @staticmethod
+    def _written(entry: tuple[Path, Path, Path]) -> Optional[Path]:
+        """The text file whisper.cpp wrote for this recording, if it has (`-of` names it; a
+        version that ignores `-of` names it after the WAV)."""
+        _, prepared, text = entry
+        for candidate in (text.with_name(text.name + ".txt"), Path(str(prepared) + ".txt")):
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _transcript(self, written: Path) -> Transcript:
+        lines = written.read_text(encoding="utf-8", errors="replace").splitlines()
+        text = " ".join(line.strip() for line in lines if line.strip())
+        return Transcript(text, self.language, self.model.name)
+
+    def _alone(self, audio: Path) -> Union[Transcript, Exception]:
+        try:
+            return self.transcribe(audio)
+        except Exception as error:
+            return error
+
+    def transcribe(self, audio: Path) -> Transcript:
+        ffmpeg = self._ffmpeg()
         with tempfile.TemporaryDirectory(prefix="chattr-stt-") as folder:
             prepared = Path(folder) / "audio.wav"
-            converted = subprocess.run(
-                [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(audio), "-ar", "16000",
-                 "-ac", "1", "-c:a", "pcm_s16le", str(prepared)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )  # fmt: skip
-            if converted.returncode != 0 or not prepared.is_file():
-                raise TranscriptionError(
-                    f"Could not read the audio {audio.name}: {converted.stderr.strip()[:200]}"
-                )
+            self._prepare(ffmpeg, audio, prepared)
             command = [self.executable, "-m", str(self.model), "-f", str(prepared), "-nt", "-np",
                        "-l", self.language or "auto"]  # fmt: skip
             try:

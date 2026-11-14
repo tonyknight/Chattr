@@ -293,3 +293,119 @@ def test_the_fixture_voicemails_transcribe_with_the_network_off(
     assert [o.transcript.text for o in outcomes.values() if o.transcript] == [
         f"heard {f.name}" for f in files
     ]
+
+
+# --- Many recordings in one whisper.cpp run -----------------------------------------------------------
+
+
+def _batch_whisper(tmp_path: Path) -> Path:
+    """A stand-in `whisper-cli` that takes many `-f`/`-of` pairs, like the real one: it "loads the
+    model" once per run (a line in runs.log) and writes `<of>.txt` for each recording.
+    $FAKE_SKIP: the index of a recording it fails on. $FAKE_CRASH: the index it dies at."""
+    script = tmp_path / "whisper-cli"
+    script.write_text(
+        "#!" + sys.executable + "\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "a = sys.argv[1:]\n"
+        "files = [a[i + 1] for i, x in enumerate(a) if x == '-f']\n"
+        "outs = [a[i + 1] for i, x in enumerate(a) if x == '-of']\n"
+        "model = a[a.index('-m') + 1]\n"
+        "assert Path(model).is_file()\n"
+        "if '-otxt' not in a:  # one recording, answered on standard output\n"
+        "    with open(Path(model).parent / 'runs.log', 'a') as log:\n"
+        "        log.write('1\\n')\n"
+        "    if os.environ.get('FAKE_ALONE_FAILS'):\n"
+        "        sys.stderr.write('cannot decode'); sys.exit(2)\n"
+        "    print('  words alone'); sys.exit(0)\n"
+        "assert len(files) == len(outs)\n"
+        "with open(Path(model).parent / 'runs.log', 'a') as log:\n"
+        "    log.write(f'{len(files)}\\n')\n"
+        "skip, crash = os.environ.get('FAKE_SKIP'), os.environ.get('FAKE_CRASH')\n"
+        "failed = 0\n"
+        "for n, (f, out) in enumerate(zip(files, outs)):\n"
+        "    assert f.endswith('.wav') and Path(f).is_file()\n"
+        "    if crash is not None and n == int(crash) and len(files) > 1:\n"
+        "        os._exit(139)\n"
+        "    if skip is not None and n == int(skip) and len(files) > 1:\n"
+        "        failed += 1\n"
+        "        continue\n"
+        "    Path(out + '.txt').write_text(f' words {n} of {len(files)}\\n')\n"
+        "sys.exit(11 if failed else 0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def _recordings(tmp_path: Path, count: int) -> list[Path]:
+    made = []
+    for n in range(count):
+        path = tmp_path / f"{n}.amr"
+        path.write_bytes(wav(seconds=0.2))
+        made.append(path)
+    return made
+
+
+def _batch_backend(tmp_path: Path, **options: object) -> WhisperCppTranscriber:
+    model = tmp_path / "ggml-large-v3-turbo.bin"
+    model.write_bytes(b"model")
+    return WhisperCppTranscriber(model, executable=_batch_whisper(tmp_path), **options)
+
+
+@needs_ffmpeg
+def test_many_recordings_load_the_model_once(tmp_path: Path) -> None:
+    files = _recordings(tmp_path, 5)
+    backend = _batch_backend(tmp_path, language="pt")
+    outcomes = transcription.transcribe_all(backend, files)
+    assert [outcomes[f].transcript.text for f in files] == [f"words {n} of 5" for n in range(5)]
+    assert outcomes[files[0]].transcript.model == "ggml-large-v3-turbo.bin"
+    assert (tmp_path / "runs.log").read_text().split() == ["5"]  # one run, not five
+
+
+@needs_ffmpeg
+def test_results_arrive_one_by_one_while_the_run_goes_on(tmp_path: Path) -> None:
+    files = _recordings(tmp_path, 3)
+    seen = [audio.name for audio, _ in _batch_backend(tmp_path).transcribe_many(files)]
+    assert seen == ["0.amr", "1.amr", "2.amr"]
+
+
+@needs_ffmpeg
+def test_a_long_list_is_split_into_runs_of_a_set_size(tmp_path: Path) -> None:
+    files = _recordings(tmp_path, 5)
+    outcomes = transcription.transcribe_all(_batch_backend(tmp_path, batch=2), files)
+    assert all(o.transcript for o in outcomes.values())
+    assert (tmp_path / "runs.log").read_text().split() == ["2", "2", "1"]
+
+
+@needs_ffmpeg
+def test_one_recording_whisper_fails_on_does_not_cost_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_SKIP", "1")
+    monkeypatch.setenv("FAKE_ALONE_FAILS", "1")
+    files = _recordings(tmp_path, 3)
+    outcomes = transcription.transcribe_all(_batch_backend(tmp_path), files)
+    assert outcomes[files[0]].transcript and outcomes[files[2]].transcript
+    assert outcomes[files[1]].transcript is None and "1.amr" in (outcomes[files[1]].error or "")
+
+
+@needs_ffmpeg
+def test_a_run_that_dies_part_way_is_finished_one_recording_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_CRASH", "1")
+    files = _recordings(tmp_path, 3)
+    outcomes = transcription.transcribe_all(_batch_backend(tmp_path), files)
+    assert [bool(outcomes[f].transcript) for f in files] == [True, True, True]
+    assert (tmp_path / "runs.log").read_text().split() == ["3", "1", "1"]
+
+
+@needs_ffmpeg
+def test_audio_that_cannot_be_read_is_reported_and_the_rest_go_on(tmp_path: Path) -> None:
+    files = _recordings(tmp_path, 2)
+    junk = tmp_path / "junk.amr"
+    junk.write_bytes(b"this is not audio")
+    outcomes = transcription.transcribe_all(_batch_backend(tmp_path), [files[0], junk, files[1]])
+    assert outcomes[junk].transcript is None and "Could not read" in (outcomes[junk].error or "")
+    assert outcomes[files[0]].transcript and outcomes[files[1]].transcript
+    assert (tmp_path / "runs.log").read_text().split() == ["2"]
