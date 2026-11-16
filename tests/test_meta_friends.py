@@ -97,6 +97,8 @@ def test_a_thread_with_nobody_on_the_list_is_left_out_and_nothing_is_stored(
     settings = Settings.load(chattr_root)
     friends = Friends.of(["Ana Costa"])
     with pytest.raises(commands.LeftOut) as left:
-        commands.convert(settings, "messenger", thread, keep=friends.in_conversation)
+        commands.convert(
+            settings, "messenger", thread, keep=lambda c, m: friends.in_conversation(c)
+        )
     assert left.value.conversation.name == "inbox/seller_1"
     assert not commands.central_database(settings).exists()

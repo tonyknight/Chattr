@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Union
 
-from chattr.people import PeopleResolver
+from chattr.people import PeopleResolver, normalize_identifier
 from chattr.records import (
     ConversationRecord,
     MessageRecord,
@@ -82,6 +82,47 @@ def _sha256_of(path: Path) -> Optional[str]:
 
 def _json(value: Any) -> Optional[str]:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str) if value else None
+
+
+@dataclass
+class GroupTidy:
+    """What `DatabaseManager.tidy_groups` removed."""
+
+    groups_removed: list[str] = field(default_factory=list)  # "<service>: <group name>"
+    members_removed: int = 0  # places in groups of people who never wrote there
+    handles_removed: int = 0
+    unchecked: set[str] = field(default_factory=set)  # services whose owner is not known yet
+
+
+def _looks_like_phone(identifier: Optional[str]) -> bool:
+    return normalize_identifier(identifier, "US").startswith("+")
+
+
+def unresolved_rows(conn: sqlite3.Connection, schema: str = "") -> list[dict[str, Any]]:
+    """Handles no person is known for, the busiest first, as dicts (`service`, `identifier`,
+    `display_name`, `messages`, `first_seen`, `last_seen`). `schema` names an attached database.
+
+    Not listed: someone who never wrote anything and is only a member of groups (or only reacted
+    in one), and someone known only by a phone number who wrote only in groups. They are listed
+    once they have a conversation with the owner of their own.
+    """
+    p = f"{schema}." if schema else ""
+    cursor = conn.execute(
+        "SELECT h.service, h.identifier, h.display_name, COUNT(m.id) AS messages, "
+        "MIN(m.timestamp_utc) AS first_seen, MAX(m.timestamp_utc) AS last_seen, "
+        f"(EXISTS (SELECT 1 FROM {p}participants pa JOIN {p}conversations c ON c.id = "
+        "pa.conversation_id WHERE pa.handle_id = h.id AND c.type != 'group') OR "
+        f"EXISTS (SELECT 1 FROM {p}messages d JOIN {p}conversations c ON c.id = d.conversation_id "
+        "WHERE d.sender_handle_id = h.id AND c.type != 'group')) AS direct "
+        f"FROM {p}handles h LEFT JOIN {p}messages m ON m.sender_handle_id = h.id "
+        "WHERE h.person IS NULL GROUP BY h.id ORDER BY messages DESC, h.service, h.identifier"
+    )
+    names = [column[0] for column in cursor.description]
+    rows = [dict(zip(names, row)) for row in cursor.fetchall()]
+    return [
+        r for r in rows
+        if r["direct"] or (r["messages"] and not _looks_like_phone(r["identifier"]))
+    ]  # fmt: skip
 
 
 class DatabaseManager:
@@ -247,6 +288,28 @@ class DatabaseManager:
                     shared += 1
         return shared
 
+    def mark_owner(self, service: str, identifier: str, owner_name: str) -> int:
+        """Say that `identifier` on `service` is the owner (a different name they use there):
+        its handle takes the owner's name, its places in conversations the role `owner`, and its
+        messages are the owner's. Returns how many messages that made the owner's."""
+        rows = self._db.execute(
+            "SELECT id FROM handles WHERE service = ? AND normalized = ?",
+            (service, identifier.strip().lower()),  # as `_handle_id` keys them
+        ).fetchall()
+        changed = 0
+        for (handle_id,) in rows:
+            self._db.execute("UPDATE handles SET person = ? WHERE id = ?", (owner_name, handle_id))
+            self._db.execute(
+                "UPDATE participants SET role = 'owner' WHERE handle_id = ?", (handle_id,)
+            )
+            changed += self._db.execute(
+                "UPDATE messages SET is_from_owner = 1 WHERE sender_handle_id = ? "
+                "AND is_from_owner = 0",
+                (handle_id,),
+            ).rowcount
+        self._db.commit()
+        return changed
+
     def name_handles(self, service: str, name_of: Callable[[Optional[str]], Optional[str]]) -> int:
         """Give a person to this service's unnamed handles that `name_of` knows (by identifier,
         then display name); returns how many were named. A handle already named is left alone."""
@@ -264,17 +327,78 @@ class DatabaseManager:
         return named
 
     def unresolved_handles(self, service: Optional[str] = None) -> list[UnresolvedHandle]:
-        """Handles with no person yet, the busiest first."""
-        rows = self._db.execute(
-            "SELECT h.service, h.identifier, h.display_name, COUNT(m.id) AS messages, "
-            "MIN(m.timestamp_utc) AS first_seen, MAX(m.timestamp_utc) AS last_seen "
-            "FROM handles h LEFT JOIN messages m ON m.sender_handle_id = h.id "
-            "WHERE h.person IS NULL"
-            + (" AND h.service = ?" if service else "")
-            + " GROUP BY h.id ORDER BY messages DESC, h.service, h.identifier",
-            (service,) if service else (),
+        """Handles with no person yet, the busiest first (see `unresolved_rows`)."""
+        return [
+            UnresolvedHandle(
+                r["service"], r["identifier"], r["display_name"], r["messages"],
+                r["first_seen"], r["last_seen"],
+            )
+            for r in unresolved_rows(self._db)
+            if service is None or r["service"] == service
+        ]  # fmt: skip
+
+    def tidy_groups(self) -> GroupTidy:
+        """Apply the rules for group conversations, from any source:
+
+        1. a group the owner never wrote in is removed, messages and all (groups someone added
+           them to and they left, spam). Only for a service whose owner is known in this database
+           (some message is marked as theirs): otherwise every group would go;
+        2. a member who never wrote in a group is not part of it here: their place among its
+           participants goes, a reaction of theirs keeps its emoji but not who sent it, and a
+           handle left with nothing is removed;
+        3. (in `unresolved_rows`) a member known only by a phone number, who wrote only in groups,
+           is never listed to be named.
+
+        Safe to repeat. Returns what was removed.
+        """
+        db = self._db
+        result = GroupTidy()
+        known = {
+            r[0]
+            for r in db.execute(
+                "SELECT DISTINCT c.service FROM messages m JOIN conversations c "
+                "ON c.id = m.conversation_id WHERE m.is_from_owner = 1"
+            )
+        }
+        silent = db.execute(
+            "SELECT c.id, c.service, COALESCE(c.name, c.source_id) FROM conversations c "
+            "WHERE c.type = 'group' AND NOT EXISTS (SELECT 1 FROM messages m "
+            "WHERE m.conversation_id = c.id AND m.is_from_owner = 1)"
         ).fetchall()
-        return [UnresolvedHandle(**dict(row)) for row in rows]
+        for conversation_id, service, name in silent:
+            if service not in known:
+                result.unchecked.add(service)
+                continue
+            ids = "SELECT id FROM messages WHERE conversation_id = ?"
+            db.execute(f"DELETE FROM reactions WHERE message_id IN ({ids})", (conversation_id,))
+            db.execute(f"DELETE FROM attachments WHERE message_id IN ({ids})", (conversation_id,))
+            db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            db.execute("DELETE FROM participants WHERE conversation_id = ?", (conversation_id,))
+            db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            result.groups_removed.append(f"{service}: {name}")
+        groups = "SELECT id FROM conversations WHERE type = 'group'"
+        result.members_removed = db.execute(
+            f"DELETE FROM participants WHERE conversation_id IN ({groups}) AND role != 'owner' "
+            "AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = "
+            "participants.conversation_id AND m.sender_handle_id = participants.handle_id)"
+        ).rowcount
+        db.execute(
+            "UPDATE reactions SET sender_handle_id = NULL WHERE sender_handle_id IS NOT NULL "
+            f"AND message_id IN (SELECT id FROM messages WHERE conversation_id IN ({groups})) "
+            "AND NOT EXISTS (SELECT 1 FROM messages w JOIN messages t ON t.id = reactions.message_id "
+            "WHERE w.conversation_id = t.conversation_id AND w.sender_handle_id = "
+            "reactions.sender_handle_id)"
+        )
+        orphans = (
+            "SELECT h.id FROM handles h WHERE NOT EXISTS (SELECT 1 FROM participants p "
+            "WHERE p.handle_id = h.id) AND NOT EXISTS (SELECT 1 FROM messages m "
+            "WHERE m.sender_handle_id = h.id) AND NOT EXISTS (SELECT 1 FROM reactions r "
+            "WHERE r.sender_handle_id = h.id)"
+        )
+        db.execute(f"DELETE FROM handle_groups WHERE handle_id IN ({orphans})")
+        result.handles_removed = db.execute(f"DELETE FROM handles WHERE id IN ({orphans})").rowcount
+        db.commit()
+        return result
 
     def _participant(self, conversation_id: str, handle_id: int) -> None:
         self._db.execute(

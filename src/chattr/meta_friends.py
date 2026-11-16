@@ -77,6 +77,41 @@ class Friends:
         return len(self.names)
 
 
+#: Where the export names its owner, relative to its top folder, newest layout first.
+PROFILES = (
+    "personal_information/profile_information/profile_information.json",
+    "profile_information/profile_information.json",
+)
+
+
+def find_profile_name(start: PathLike) -> Optional[str]:
+    """The owner's own Facebook name, from the export's profile (looked for above `start`, at the
+    known places only); None when the export does not hold it."""
+    for folder in [Path(start), *Path(start).parents][:_LEVELS]:
+        for place in PROFILES:
+            try:
+                data = json.loads((folder / place).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            name = _full_name(data)
+            if name:
+                return unicodedata.normalize("NFC", _fix_facebook_encoding(name))
+    return None
+
+
+def _full_name(data: Any) -> Optional[str]:
+    """`…{"name": {"full_name": "…"}}` anywhere near the top of a profile file."""
+    if isinstance(data, dict):
+        name = data.get("name")
+        if isinstance(name, dict) and isinstance(name.get("full_name"), str):
+            return str(name["full_name"])
+        for value in data.values():
+            found = _full_name(value) if isinstance(value, dict) else None
+            if found:
+                return found
+    return None
+
+
 def _deactivated(name: Optional[str]) -> bool:
     """`Facebook user` or `Facebook user (<thread>)`: an account Meta no longer names."""
     text = (name or "").strip().casefold()
