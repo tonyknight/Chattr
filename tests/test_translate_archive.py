@@ -209,7 +209,7 @@ def test_translations_show_under_the_original(tmp_path: Path) -> None:
     with DatabaseManager(path) as db:
         translate_archive(db, Recorder())
         written = render_pages(Renderer(db), tmp_path / "site")
-    page = next(p for p in written if p.name.startswith("("))
+    page = next(p for p in written if p.stem == p.parent.name)
     text = page.read_text(encoding="utf-8").split('id="chattr-data"')[0]
     assert f'<div class="translation">[en] {PT}</div>' in text and PT in text
 
@@ -223,7 +223,7 @@ def test_a_translation_with_markup_is_escaped(tmp_path: Path) -> None:
     with DatabaseManager(path) as db:
         translate_archive(db, Hostile())
         written = render_pages(Renderer(db), tmp_path / "site")
-    page = next(p for p in written if p.name.startswith("("))
+    page = next(p for p in written if p.stem == p.parent.name)
     assert (
         "&lt;script&gt;alert(1)&lt;/script&gt;"
         in page.read_text(encoding="utf-8").split('id="chattr-data"')[0]

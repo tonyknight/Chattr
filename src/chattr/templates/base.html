@@ -9,14 +9,21 @@
 @media (prefers-color-scheme: dark) { :root { --bg:#14171f; --fg:#e4e8f2; --muted:#8e98b3; --card:#1d222e; --line:#2c3344; --sent:#3a2a17; --received:#1d222e; --link:#7fb0ff; --date:#fa9237; --l1:#3d2610; --l2:#7a4513; --l3:#b8641a; --l4:#fa9237; --on-l4:#1d2330; } }
 * { box-sizing: border-box; }
 body { margin:0; font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
-header, main, .calendar { max-width: 52rem; margin: 0 auto; padding: 0 1rem; }
+header, main { max-width: 52rem; margin: 0 auto; padding: 0 1rem; }
 header { padding-top: 1.5rem; }
 h1 { margin:0 0 .5rem; font-size:1.6rem; }
 a { color: var(--link); }
-.years { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:1rem; }
+.years { display:flex; flex-wrap:wrap; gap:.4rem; max-width:52rem; margin:0 auto 1rem; padding:.45rem 1rem; position:sticky; top:0; z-index:2; background:var(--bg); border-bottom:1px solid var(--line); }
 .year { padding:.15rem .6rem; border:1px solid var(--line); border-radius:1rem; text-decoration:none; background:var(--card); }
 .year.current { background:var(--link); color:var(--bg); border-color:var(--link); }
-.calendar { display:grid; grid-template-columns:repeat(auto-fill,minmax(11rem,1fr)); gap:.75rem; margin-bottom:1.5rem; }
+.calendar { margin:.4rem 0 1rem; }
+.months { display:grid; grid-template-columns:repeat(auto-fill,minmax(11rem,1fr)); gap:.75rem; }
+.year-title { font-size:1.3rem; margin:2rem 0 .2rem; }
+.day { content-visibility:auto; contain-intrinsic-size:auto 20rem; }
+.year-block, .date-separator, .entry { scroll-margin-top:4.5rem; } .year-block { padding-top:.1rem; }
+.related, .mail-list { margin:.3rem 0; } .related summary, .mail-list summary { cursor:pointer; color:var(--muted); }
+.related ul, .mail-list ul { margin:.3rem 0 .5rem; padding-left:1.2rem; }
+.end { text-align:center; margin:2rem 0 3rem; }
 .month { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.5rem; }
 .month-name { font-weight:600; font-size:.85rem; margin-bottom:.25rem; }
 .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; font-size:.7rem; text-align:center; }

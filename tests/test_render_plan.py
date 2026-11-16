@@ -1,4 +1,4 @@
-"""Pages are planned per person per year, merging platforms, by the event's local date."""
+"""One page per person (and per group), merging platforms, every year in it by local date."""
 
 from __future__ import annotations
 
@@ -20,30 +20,34 @@ def renderer(full_archive) -> Renderer:
         return Renderer(db)
 
 
-def _pages(renderer: Renderer, kind: str, title: str):
-    return {p.year: p for p in renderer.pages if p.kind == kind and p.title == title}
+def _page(renderer: Renderer, kind: str, title: str):
+    (page,) = [p for p in renderer.pages if p.kind == kind and p.title == title]
+    return page
 
 
-def test_one_person_one_page_set_across_every_platform(renderer: Renderer) -> None:
-    pages = _pages(renderer, "person", family.ANA.name)
-    assert sorted(pages) == [2016, 2018, 2022, 2023, 2024, 2025]
-    services = {
-        renderer.messages[mid]["service"] for page in pages.values() for mid in page.message_ids
-    }
+def _years(renderer: Renderer, page) -> list[int]:
+    return sorted({renderer.messages[m]["local"].year for m in page.message_ids})
+
+
+def test_one_person_one_page_across_every_platform_and_year(renderer: Renderer) -> None:
+    page = _page(renderer, "person", family.ANA.name)
+    assert _years(renderer, page) == [2016, 2018, 2022, 2023, 2024, 2025]
+    services = {renderer.messages[mid]["service"] for mid in page.message_ids}
     assert services == {"iMessage", "WhatsApp", "Google Voice", "Voicemail"}
-    assert {p.folder for p in pages.values()} == {f"People/{family.ANA.name}"}
-    assert pages[2023].filename == f"(2023) {family.ANA.name}.html"
+    assert page.folder == f"People/{family.ANA.name}"
+    assert page.filename == f"{family.ANA.name}.html"
+    assert page.year == 2016  # the year it starts
 
 
-def test_a_page_holds_its_year_in_time_order(renderer: Renderer) -> None:
-    page = _pages(renderer, "person", family.ANA.name)[2024]
+def test_a_page_holds_everything_in_time_order(renderer: Renderer) -> None:
+    page = _page(renderer, "person", family.ANA.name)
     stamps = [renderer.messages[m]["timestamp_utc"] for m in page.message_ids]
-    assert stamps == sorted(stamps) and all(s.startswith("2024") for s in stamps)
-    assert len(page.conversation_ids) == 1  # the 2024 WhatsApp chat
+    assert stamps == sorted(stamps)
+    assert len(page.conversation_ids) >= 4  # iMessage, WhatsApp, Google Voice, voicemail
 
 
 def test_a_group_has_its_own_folder(renderer: Renderer) -> None:
-    (page,) = _pages(renderer, "group", family.GROUP_NAME).values()
+    page = _page(renderer, "group", family.GROUP_NAME)
     assert page.folder == f"Groups/{family.GROUP_NAME}" and page.year == 2024
     # Ana and João wrote in the group, but their own pages don't hold it
     assert all(
@@ -55,16 +59,17 @@ def test_a_group_has_its_own_folder(renderer: Renderer) -> None:
 
 
 def test_an_unresolved_handle_gets_a_folder_under_its_own_name(renderer: Renderer) -> None:
-    pages = _pages(renderer, "person", family.UNKNOWN_HANDLE)
-    assert sorted(pages) == [2018, 2025]  # a missed call, then a delivery text
-    assert pages[2025].folder == f"People/{family.UNKNOWN_HANDLE}"
-    assert {renderer.messages[m]["service"] for m in pages[2018].message_ids} == {"Google Voice"}
+    page = _page(renderer, "person", family.UNKNOWN_HANDLE)
+    assert _years(renderer, page) == [2018, 2025]  # a missed call, then a delivery text
+    assert page.folder == f"People/{family.UNKNOWN_HANDLE}"
+    first = renderer.messages[page.message_ids[0]]
+    assert first["service"] == "Google Voice"
 
 
 def test_an_alias_merges_a_username_into_the_person(renderer: Renderer) -> None:
-    pages = _pages(renderer, "person", family.RUI.name)
-    services = {renderer.messages[m]["service"] for p in pages.values() for m in p.message_ids}
-    assert services == {"WhatsApp", "Instagram"} and sorted(pages) == [2022, 2024]
+    page = _page(renderer, "person", family.RUI.name)
+    services = {renderer.messages[m]["service"] for m in page.message_ids}
+    assert services == {"WhatsApp", "Instagram"} and _years(renderer, page) == [2022, 2024]
 
 
 def test_mail_is_planned_per_thread_not_per_person(renderer: Renderer) -> None:
@@ -107,7 +112,7 @@ def test_a_new_years_message_belongs_to_the_senders_year(tmp_path: Path) -> None
         )
         db.commit()
         page = Renderer(db).pages[0]
-    assert page.year == 2024 and page.filename == "(2024) Friend.html"
+    assert page.year == 2024 and page.filename == "Friend.html"
 
 
 def test_two_person_chats_fall_back_to_the_chat_name_without_an_owner(tmp_path: Path) -> None:
@@ -149,13 +154,13 @@ def test_names_are_made_safe_for_folders(tmp_path: Path) -> None:
 
 
 def test_the_document_carries_everything_needed_to_rebuild_the_rows(renderer: Renderer) -> None:
-    page = _pages(renderer, "person", family.ANA.name)[2023]
+    page = _page(renderer, "person", family.ANA.name)
     document = renderer.document(page)
-    assert document["schema"] == "chattr-page-1"
+    assert document["schema"] == "chattr-page-2"
     assert (document["kind"], document["title"], document["year"]) == (
         "person",
         family.ANA.name,
-        2023,
+        2016,
     )
     json.dumps(document)  # plain JSON
     ids = [m["id"] for m in document["messages"]]
@@ -170,7 +175,7 @@ def test_the_document_carries_everything_needed_to_rebuild_the_rows(renderer: Re
 
 
 def test_the_documents_handles_and_attachments_are_complete(renderer: Renderer) -> None:
-    page = _pages(renderer, "person", family.ANA.name)[2023]
+    page = _page(renderer, "person", family.ANA.name)
     document = renderer.document(page)
     handle = next(h for h in document["handles"] if h["identifier"] == family.ANA.phones[0])
     assert (handle["service"], handle["person"]) == ("iMessage", family.ANA.name)
@@ -191,13 +196,13 @@ def test_the_documents_handles_and_attachments_are_complete(renderer: Renderer) 
 
 
 def test_owner_messages_have_no_sender_and_a_flag(renderer: Renderer) -> None:
-    document = renderer.document(_pages(renderer, "person", family.ANA.name)[2016])
+    document = renderer.document(_page(renderer, "person", family.ANA.name))
     mine = next(m for m in document["messages"] if m["body"].startswith("Thank God"))
     assert mine["sender"] is None and mine["is_from_owner"] is True
 
 
 def test_the_document_ids_are_the_database_ids(renderer: Renderer, full_archive) -> None:
-    page = _pages(renderer, "person", family.ANA.name)[2018]
+    page = _page(renderer, "person", family.ANA.name)
     with sqlite3.connect(full_archive.database) as db:
         stored = {r[0] for r in db.execute("SELECT id FROM messages")}
     assert set(page.message_ids) <= stored

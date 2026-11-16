@@ -183,11 +183,11 @@ def test_a_folder_that_is_a_link_out_of_the_roots_is_refused(
 
 
 def test_output_is_served_from_inside_output_only(browser: Browser, chattr_root: Path) -> None:
-    page = chattr_root / "Output" / "Chattr" / "Messages" / "Ana" / "(2024) Ana.html"
+    page = chattr_root / "Output" / "Chattr" / "Messages" / "Ana" / "Ana.html"
     page.parent.mkdir(parents=True)
     page.write_text("<html>Ana</html>", encoding="utf-8")
     (chattr_root / "Output" / "Chattr" / "index.html").write_text("<html>index</html>")
-    served = browser.get("/output/Chattr/Messages/Ana/(2024)%20Ana.html")
+    served = browser.get("/output/Chattr/Messages/Ana/Ana.html")
     assert served.status == 200 and "text/html" in served.headers["content-type"]
     assert browser.get("/output/Chattr/").text == "<html>index</html>"  # a folder shows its index
     assert browser.get("/output/Chattr/Messages/").status == 404  # no folder listings

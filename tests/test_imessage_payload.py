@@ -196,7 +196,7 @@ def test_the_page_shows_the_preview_and_the_effect(chattr_root: Path, tmp_path: 
     settings = Settings.load(chattr_root)
     commands.convert_imessage(settings, db_path=_database(tmp_path), spam_mode="disabled")
     commands.generate_html(settings, out=tmp_path / "out")
-    page = next((tmp_path / "out" / "People").rglob("(2024) *.html")).read_text(encoding="utf-8")
+    page = next((tmp_path / "out" / "People").glob("*/*.html")).read_text(encoding="utf-8")
     assert 'href="https://example.org/pasteis"' in page and "Pastéis de nata" in page
     assert "The recipe our grandmother used." in page and "Receitas" in page
     assert "Apple Pay: $20 Payment" in page and "Sent with Balloons" in page

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from chattr.database_manager import DatabaseManager, _json
-from chattr.render import SCHEMA
+from chattr.render import SCHEMAS, expand
 
 PathLike = Union[str, Path]
 _ISLAND = re.compile(r'<script type="application/json" id="chattr-data">(.*?)</script>', re.S)
@@ -61,12 +61,12 @@ def read_islands(site: PathLike) -> tuple[list[tuple[Path, dict[str, Any]]], lis
         except ValueError as error:
             skipped.append(f"{page}: damaged data island ({error})")
             continue
-        if not isinstance(document, dict) or document.get("schema") != SCHEMA:
+        if not isinstance(document, dict) or document.get("schema") not in SCHEMAS:
             skipped.append(
                 f"{page}: unknown data schema {document.get('schema') if isinstance(document, dict) else '?'}"
             )
             continue
-        documents.append((page, document))
+        documents.append((page, expand(document)))
     return documents, skipped
 
 

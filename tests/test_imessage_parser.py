@@ -176,8 +176,8 @@ def test_html_is_written_per_conversation(chattr_root: Path, fixture_family: Fam
     result = _import(chattr_root, fixture_family.paths["imessage"], html=True)
     site = chattr_root / "Output" / "Chattr"
     assert result.html_path == site / "index.html"
-    pages = sorted(p.relative_to(site).as_posix() for p in site.rglob("(*) *.html"))
-    assert f"Groups/{family.GROUP_NAME}/(2024) {family.GROUP_NAME}.html" in pages
+    pages = sorted(p.relative_to(site).as_posix() for p in site.rglob("*.html"))
+    assert f"Groups/{family.GROUP_NAME}/{family.GROUP_NAME}.html" in pages
     assert any(p.startswith("People/+15550101/") for p in pages)  # Ana, no contacts given
 
 

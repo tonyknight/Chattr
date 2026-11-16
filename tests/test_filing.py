@@ -234,7 +234,7 @@ def test_a_file_that_is_missing_is_reported_as_missing_on_the_page(archive: Arch
         ),
     )
     archive.file()
-    page = next(p for p in archive.written if p.name.startswith("(2024)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     assert "IMG_1.heic (file not in this archive)" in page
 
 
@@ -258,7 +258,7 @@ def test_an_amr_recording_is_filed_as_m4a(archive: Archive) -> None:
 def test_the_page_plays_the_m4a(archive: Archive) -> None:
     _voicemail(archive, ANA, _at(2018, 12, 21, 15, 2, 31), amr(2))
     archive.file()
-    page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     audio = page[page.index("<audio") : page.index("</audio>")]
     assert ".m4a" in audio and ".amr" not in audio and "cannot play" not in page
 
@@ -289,7 +289,7 @@ def test_without_ffmpeg_the_original_is_filed_and_the_gap_is_reported(
     filed = archive.file()
     original = f"People/{ANA}/Voicemail/(2018-12-21) 15-02-31 {ANA}.amr"
     assert archive.files() == [original] and len(filed.unplayable) == 1 and filed.ffmpeg_missing
-    page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     assert "cannot play" in page  # and the page says why it may not play
 
 
@@ -341,7 +341,7 @@ def test_a_whatsapp_voice_note_is_filed_as_m4a(archive: Archive, tmp_path: Path)
     )  # fmt: skip
     archive.file()
     assert archive.files() == [f"People/{ANA}/WhatsApp/(2024-03-01) 14-05-09 {ANA}.m4a"]
-    page = next(p for p in archive.written if p.name.startswith("(2024)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     assert "<audio" in page
 
 
@@ -403,7 +403,7 @@ def test_an_mp3_that_cannot_be_converted_is_filed_as_it_is_without_a_warning(
     filed = archive.file()
     assert archive.files() == [f"People/{ANA}/Google Voice/(2018-09-08) 10-22-45 {ANA}.mp3"]
     assert filed.playable_made == 0 and filed.unplayable == []  # it still plays as it is
-    page = next(p for p in archive.written if p.name.startswith("(2018)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     assert "cannot play" not in page
 
 
@@ -570,7 +570,7 @@ def test_conversion_can_be_turned_off(archive: Archive) -> None:
 def test_the_page_shows_the_converted_picture(archive: Archive) -> None:
     _photo(archive, _picture("HEIF"), ".heic")
     archive.file()
-    page = next(p for p in archive.written if p.name.startswith("(2024)")).read_text("utf-8")
+    page = next(p for p in archive.written if p.stem == p.parent.name).read_text("utf-8")
     assert "<img" in page and ".jpg" in page and "file not in this archive" not in page
 
 
@@ -603,7 +603,7 @@ def _sticker(archive: Archive, data: bytes, who: str, day: int, chat: str | None
 
 
 def _pages(archive: Archive) -> dict[str, str]:
-    return {p.parent.name: p.read_text("utf-8") for p in archive.written if p.name[:1] == "("}
+    return {p.parent.name: p.read_text("utf-8") for p in archive.written if p.stem == p.parent.name}
 
 
 def test_the_same_file_sent_many_times_is_stored_once_and_shown_every_time(

@@ -238,7 +238,7 @@ def test_the_page_shows_replies_edits_and_events(chattr_root: Path, tmp_path: Pa
     commands.convert_imessage(settings, db_path=_database(tmp_path), spam_mode="disabled")
     index = commands.generate_html(settings, out=tmp_path / "out")
     assert index is not None
-    page = next((tmp_path / "out" / "Groups").rglob("(2024) *.html")).read_text(encoding="utf-8")
+    page = next((tmp_path / "out" / "Groups").glob("*/*.html")).read_text(encoding="utf-8")
     # the reply links to the message it answers, with a few of its words
     assert (
         'class="reply"' in page and "Where shall we meet?" in page.split('class="reply"')[1][:300]
@@ -327,7 +327,7 @@ def test_the_page_marks_deleted_and_categorised_messages(chattr_root: Path, tmp_
     settings = Settings.load(chattr_root)
     commands.convert_imessage(settings, db_path=_filtered(tmp_path), spam_mode="disabled")
     commands.generate_html(settings, out=tmp_path / "out")
-    page = next((tmp_path / "out" / "People").rglob("(2024) *.html")).read_text(encoding="utf-8")
+    page = next((tmp_path / "out" / "People").glob("*/*.html")).read_text(encoding="utf-8")
     assert "Deleted in Messages" in page and "Promotion" in page and "Transaction" in page
 
 

@@ -87,8 +87,7 @@ def test_the_index_links_every_page(site) -> None:
     assert index in written and index.is_file()
     text = index.read_text(encoding="utf-8")
     hrefs = [unquote(h) for h in re.findall(r'<a href="([^"#]+\.html)"', text)]
-    homes = {f"{p.folder}/index.html" for p in renderer.pages if p.kind in ("person", "group")}
-    assert {h for h in hrefs} == {p.path for p in renderer.pages} | homes
+    assert set(hrefs) == {p.path for p in renderer.pages} and len(hrefs) == len(set(hrefs))
     for href in hrefs:
         assert (out / href).is_file()
     assert family.ANA.name in text and family.GROUP_NAME in text and "Fotos de São Martinho" in text
@@ -98,10 +97,9 @@ def test_the_index_links_every_page(site) -> None:
 def test_the_index_counts_messages_per_page(site) -> None:
     renderer, out, _ = site
     text = (out / "index.html").read_text(encoding="utf-8")
-    page = next(p for p in renderer.pages if (p.title, p.year) == (family.ANA.name, 2024))
-    assert len(page.message_ids) == 7  # six on the 1st, one on the 2nd
-    assert f'2024</a> <span class="count">({len(page.message_ids)})</span>' in text
-    assert "(1 message)" in text and "(1 messages)" not in text
+    page = next(p for p in renderer.pages if (p.kind, p.title) == ("person", family.ANA.name))
+    assert f'<span class="count">{len(page.message_ids)} items, 2016–2025</span>' in text
+    assert "1 message<" in text and "1 messages" not in text  # a mail thread of one
 
 
 # --- Hostile mail ---------------------------------------------------------------------------

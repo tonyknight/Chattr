@@ -56,11 +56,11 @@ def test_a_whatsapp_chat_is_converted_and_its_pages_can_be_opened(
     assert link, done.text
     index = browser.get(link.group(1))
     assert index.status == 200 and "Ana Costa" in index.text
-    page_path = re.search(r'href="([^"]*\(2024\)[^"]*\.html)"', index.text)
+    page_path = re.search(r'href="(People/[^"]*\.html)"', index.text)
     assert page_path
     page = browser.get("/output/Chattr/" + page_path.group(1))
     assert page.status == 200 and "Que lindo! Buy two." in page.text
-    photo = re.search(r'src="([^"]+)"', page.text)
+    photo = re.search(r'<img [^>]*src="([^"]+)"', page.text)
     assert photo, "the copied photo is shown"
     folder = "/output/Chattr/" + page_path.group(1).rsplit("/", 1)[0] + "/"
     from urllib.parse import unquote, urljoin

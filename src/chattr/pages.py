@@ -1,10 +1,17 @@
 """Render the planned pages as self-contained HTML.
 
-Every person and group also gets an `index.html`: all that came from them, by year and by source.
+Every person and group has **one page** with everything from them, every platform and every year:
+a summary (how much, from when to when, from which sources, their groups and mail), a bar of years,
+a heat-map calendar per year, a block per date, and an entry per message with a platform badge, a
+stable `id="m-<id>"` anchor, the sender, and the local time with its offset (or "UTC" / "zone
+unknown") at the stored precision.
 
-Each page is one HTML file: inline CSS (light and dark), a heatmap calendar of the year, a block per
-date, an entry per message with a platform badge, a stable `id="m-<id>"` anchor, the sender, and
-the local time with its offset (or "UTC" / "zone unknown") at the stored precision. Text is always
+A page can hold a whole life's messages with someone, so it is built to open at once however long it
+is: the browser draws it as it reads it (the top is on screen before the end has arrived), it lays
+out only the dates that are on screen (`content-visibility`), and pictures, video and audio load
+only when they are scrolled to. A bar of years stays at the top while reading; each year begins with
+its calendar. There is no script: the page works the same in any browser, and inside Caixa, which
+shows pages with scripts turned off. Text is always
 escaped; links are only made from http(s) addresses; attachment links are only made to files that
 exist inside the given attachment folders. A JSON data island (`#chattr-data`) carries every stored
 column of the page's messages so the database can be rebuilt from the pages.
@@ -25,7 +32,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup, escape
 
 from chattr.filing import playable_copy
-from chattr.render import GROUPS, PEOPLE, PageSpec, Renderer
+from chattr.render import GROUPS, PEOPLE, PageSpec, Renderer, compact
 
 PathLike = Union[str, Path]
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -294,35 +301,52 @@ def _day_label(date: datetime) -> str:
     return f"{date:%A}, {date:%B} {date.day}, {date.year}"
 
 
-def _message_page(site: _Site, spec: PageSpec) -> str:
+def _message_page(site: _Site, spec: PageSpec, relations: "_Relations") -> str:
     renderer = site.renderer
     page_dir = site.out_root / spec.folder
-    messages = [renderer.messages[m] for m in spec.message_ids]
-    counts: dict[str, int] = {}
-    days: dict[str, dict[str, Any]] = {}
-    for message in messages:
+    up = "../" * (spec.folder.count("/") + 1)
+    years: dict[int, dict[str, Any]] = {}
+    services: dict[str, int] = {}
+    for message_id in spec.message_ids:
+        message = renderer.messages[message_id]
         local: datetime = message["local"]
+        year = years.setdefault(
+            local.year, {"year": local.year, "count": 0, "counts": {}, "days": {}}
+        )
         key = f"{local:%Y-%m-%d}"
-        counts[key] = counts.get(key, 0) + 1
-        day = days.setdefault(key, {"date": key, "label": _day_label(local), "entries": []})
+        year["count"] += 1
+        year["counts"][key] = year["counts"].get(key, 0) + 1
+        day = year["days"].setdefault(key, {"date": key, "label": _day_label(local), "entries": []})
         day["entries"].append(_entry(site, message, page_dir))
-    years = [
-        {
-            "year": p.year,
-            "href": quote(p.filename, safe="()"),
-            "current": p.year == spec.year,
-        }
-        for p in renderer.pages
-        if p.folder == spec.folder and p.kind == spec.kind
-    ]
+        services[message["service"]] = services.get(message["service"], 0) + 1
+    ordered = []
+    for number in sorted(years):
+        year = years[number]
+        ordered.append(
+            {
+                "year": number,
+                "count": _plural(year["count"], "item"),
+                "months": _calendar(number, year["counts"]),
+                "days": list(year["days"].values()),
+            }
+        )
+    first = renderer.messages[spec.message_ids[0]]["local"]
+    last = renderer.messages[spec.message_ids[-1]]["local"]
     return site.env.get_template("page.html").render(
         title=spec.title,
-        year=spec.year,
-        years=years,
-        home="index.html",
-        months=_calendar(spec.year, counts),
-        days=list(days.values()),
-        island=Markup(island_json(renderer.document(spec))),
+        kind=spec.kind,
+        total=_plural(len(spec.message_ids), "item"),
+        first=f"{first:%Y-%m-%d}",
+        last=f"{last:%Y-%m-%d}",
+        sources=[
+            {"name": name, "slug": _slug(name), "count": _plural(count, "item")}
+            for name, count in sorted(services.items())
+        ],
+        related=relations.related(spec, up),
+        mail=relations.mail(spec, up),
+        years=ordered,
+        back=f"{up}index.html",
+        island=Markup(island_json(compact(renderer.document(spec)))),
     )
 
 
@@ -374,65 +398,65 @@ def _mail_page(site: _Site, spec: PageSpec) -> str:
         title=spec.title,
         mails=mails,
         back="../" * depth + "index.html",
-        island=Markup(island_json(renderer.document(spec))),
+        island=Markup(island_json(compact(renderer.document(spec)))),
     )
 
 
 def _index(site: _Site) -> str:
-    """The index: every person, group and mail thread, each linking to its pages."""
+    """The index: every person, group and mail thread, each linking to its page."""
     renderer = site.renderer
-    sections: dict[str, dict[str, Any]] = {
-        "person": {"name": "People", "by_folder": {}},
-        "group": {"name": "Groups", "by_folder": {}},
-        "mail": {"name": "Mail", "entries": []},
-    }
+    people: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
+    mail: list[dict[str, Any]] = []
     for page in renderer.pages:
         count = len(page.message_ids)
-        link = {"href": quote(page.path, safe="/()"), "year": page.year, "count": count}
+        href = quote(page.path, safe="/()")
         if page.kind == "mail":
-            sections["mail"]["entries"].append(
-                {"title": page.filename.removesuffix(".html"), "href": link["href"], "count": count}
-            )
-        else:
-            entry = sections[page.kind]["by_folder"].setdefault(
-                page.folder,
-                {
-                    "title": page.title,
-                    "home": quote(f"{page.folder}/index.html", safe="/()"),
-                    "links": [],
-                },
-            )
-            entry["links"].append(link)
-    ordered = []
-    for kind in ("person", "group"):
-        items = sorted(sections[kind]["by_folder"].values(), key=lambda i: i["title"].casefold())
-        if items:
-            ordered.append({"name": sections[kind]["name"], "entries": items})
-    if sections["mail"]["entries"]:
-        ordered.append({"name": "Mail", "entries": sections["mail"]["entries"]})
-    return site.env.get_template("index.html").render(sections=ordered)
+            title = page.filename.removesuffix(".html")
+            mail.append({"title": title, "href": href, "count": _plural(count, "message")})
+            continue
+        last = renderer.messages[page.message_ids[-1]]["local"].year
+        span = str(page.year) if last == page.year else f"{page.year}–{last}"
+        entry = {"title": page.title, "href": href, "count": _plural(count, "item"), "span": span}
+        (people if page.kind == "person" else groups).append(entry)
+    sections: list[dict[str, Any]] = []
+    for name, entries in (("People", people), ("Groups", groups)):
+        if entries:
+            entries.sort(key=lambda e: str(e["title"]).casefold())
+            sections.append({"name": name, "entries": entries})
+    if mail:
+        sections.append({"name": "Mail", "entries": mail})
+    return site.env.get_template("index.html").render(sections=sections)
 
 
 def _plural(count: int, word: str) -> str:
     return f"{count:,} {word}" if count == 1 else f"{count:,} {word}s"
 
 
-def _folder_indexes(site: _Site) -> dict[str, str]:
-    """An `index.html` for every person and group: all that came from them, by year and source.
+class _Relations:
+    """Who is in what, worked out once for every page (an archive can hold thousands of people):
+    the groups each person is in, the people in each group, the mail each person is in."""
 
-    A person's page also lists the groups they are in and the mail they sent; a group's lists its
-    members. Returned as {path relative to the output folder: the page}.
-    """
-    renderer = site.renderer
-    folders: dict[str, list[PageSpec]] = {}
-    for spec in renderer.pages:
-        if spec.kind in ("person", "group"):
-            folders.setdefault(spec.folder, []).append(spec)
-    homes = {
-        specs[0].title: folder for folder, specs in folders.items() if specs[0].kind == "person"
-    }
+    def __init__(self, renderer: Renderer) -> None:
+        self.renderer = renderer
+        self.homes: dict[str, str] = {}  # person → their page
+        self.groups_of: dict[str, dict[str, str]] = {}  # person → {group page: group title}
+        self.members_of: dict[str, set[str]] = {}  # group page → its people
+        self.mail_of: dict[str, list[PageSpec]] = {}  # person → mail threads they are in
+        for spec in renderer.pages:
+            if spec.kind == "person":
+                self.homes[spec.title] = spec.path
+            elif spec.kind == "group":
+                names = self._members(spec)
+                self.members_of.setdefault(spec.path, set()).update(names)
+                for name in names:
+                    self.groups_of.setdefault(name, {})[spec.path] = spec.title
+            elif spec.kind == "mail":
+                for name in self._members(spec):
+                    self.mail_of.setdefault(name, []).append(spec)
 
-    def members(spec: PageSpec) -> set[str]:
+    def _members(self, spec: PageSpec) -> set[str]:
+        renderer = self.renderer
         handles: set[int] = set()
         for conversation_id in spec.conversation_ids:
             handles |= set(renderer.participants.get(conversation_id, []))
@@ -443,81 +467,28 @@ def _folder_indexes(site: _Site) -> dict[str, str]:
         }
         return {renderer.label(h) for h in handles if h not in renderer.owner_handles}
 
-    # Who is in what, worked out once (not once per person: an archive can hold thousands).
-    groups_of: dict[str, dict[str, str]] = {}  # person → {group folder: group title}
-    members_of: dict[str, set[str]] = {}  # group folder → its people
-    mail_of: dict[str, list[PageSpec]] = {}  # person → mail threads they are in
-    for spec in renderer.pages:
-        if spec.kind == "group":
-            names = members(spec)
-            members_of.setdefault(spec.folder, set()).update(names)
-            for name in names:
-                groups_of.setdefault(name, {})[spec.folder] = spec.title
-        elif spec.kind == "mail":
-            for name in members(spec):
-                mail_of.setdefault(name, []).append(spec)
-
-    pages = {}
-    for folder, specs in folders.items():
-        first = specs[0]
-        up = "../" * (folder.count("/") + 1)
-        services: dict[str, int] = {}
-        years: list[dict[str, Any]] = []
-        moments = []
-        for spec in sorted(specs, key=lambda s: s.year):
-            by_service: dict[str, int] = {}
-            for message_id in spec.message_ids:
-                message = renderer.messages[message_id]
-                by_service[message["service"]] = by_service.get(message["service"], 0) + 1
-                moments.append(message["local"])
-            for service, count in by_service.items():
-                services[service] = services.get(service, 0) + count
-            years.append(
-                {
-                    "year": spec.year,
-                    "href": quote(spec.filename, safe="()"),
-                    "count": len(spec.message_ids),
-                    "sources": [
-                        {"name": name, "slug": _slug(name), "count": count}
-                        for name, count in sorted(by_service.items())
-                    ],
-                }
+    def related(self, spec: PageSpec, up: str) -> list[dict[str, Optional[str]]]:
+        """A person's groups, or a group's people, each with a link to their page."""
+        if spec.kind == "person":
+            return [
+                {"title": title, "href": quote(f"{up}{path}", safe="/().")}
+                for path, title in sorted(self.groups_of.get(spec.title, {}).items())
+            ]
+        found: list[dict[str, Optional[str]]] = []
+        for name in sorted(self.members_of.get(spec.path, set()), key=str.casefold):
+            home = self.homes.get(name)
+            found.append(
+                {"title": name, "href": quote(f"{up}{home}", safe="/().") if home else None}
             )
-        related: list[dict[str, Optional[str]]] = []
-        mail = []
-        if first.kind == "person":
-            for other_folder, title in sorted(groups_of.get(first.title, {}).items()):
-                href = quote(f"{up}{other_folder}/index.html", safe="/().")
-                related.append({"title": title, "href": href})
-            for spec in mail_of.get(first.title, []):
-                mail.append(
-                    {
-                        "title": spec.filename.removesuffix(".html"),
-                        "href": quote(f"{up}{spec.path}", safe="/()."),
-                    }
-                )
-        else:
-            for name in sorted(members_of.get(folder, set()), key=str.casefold):
-                home = homes.get(name)
-                member = quote(f"{up}{home}/index.html", safe="/().") if home else None
-                related.append({"title": name, "href": member})
-        total = sum(int(year["count"]) for year in years)
-        pages[f"{folder}/index.html"] = site.env.get_template("person.html").render(
-            title=first.title,
-            kind=first.kind,
-            total=_plural(total, "item"),
-            first=f"{min(moments):%Y-%m-%d}",
-            last=f"{max(moments):%Y-%m-%d}",
-            sources=[
-                {"name": name, "slug": _slug(name), "count": _plural(count, "item")}
-                for name, count in sorted(services.items())
-            ],
-            years=years,
-            related=related,
-            mail=mail,
-            back=f"{up}index.html",
-        )
-    return pages
+        return found
+
+    def mail(self, spec: PageSpec, up: str) -> list[dict[str, str]]:
+        if spec.kind != "person":
+            return []
+        return [
+            {"title": m.filename.removesuffix(".html"), "href": quote(f"{up}{m.path}", safe="/().")}
+            for m in self.mail_of.get(spec.title, [])
+        ]
 
 
 PAGES_LIST = ".chattr-pages"
@@ -562,15 +533,15 @@ def render_pages(
     written is kept in `pages_list` (default: `.chattr-pages` in `out_root`).
     """
     site = _Site(renderer, Path(out_root), attachment_roots)
+    relations = _Relations(renderer)
     written = []
     for spec in renderer.pages:
         path = site.out_root / spec.path
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = _mail_page(site, spec) if spec.kind == "mail" else _message_page(site, spec)
-        path.write_text(text, encoding="utf-8")
-        written.append(path)
-    for relative, text in _folder_indexes(site).items():
-        path = site.out_root / relative
+        if spec.kind == "mail":
+            text = _mail_page(site, spec)
+        else:
+            text = _message_page(site, spec, relations)
         path.write_text(text, encoding="utf-8")
         written.append(path)
     index = site.out_root / "index.html"

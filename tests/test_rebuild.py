@@ -55,7 +55,7 @@ def test_the_result_reports_what_was_read(full_archive, rebuilt) -> None:
     site, _, result = rebuilt
     assert result.messages == _count(full_archive.database, "messages")
     assert result.conversations == _count(full_archive.database, "conversations")
-    assert result.pages == len([p for p in site.rglob("(*) *.html")])
+    assert result.pages == len([p for p in site.rglob("*.html") if p.name != "index.html"])
     assert result.skipped == []
 
 
@@ -82,7 +82,7 @@ def test_rendering_the_rebuilt_database_gives_identical_pages(
         p.relative_to(again): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in again.rglob("*.html")
     }
-    assert first == second and len(first) > 10
+    assert first == second and len(first) >= 8  # a page per person and group, mail, the index
 
 
 def test_rebuilding_twice_into_fresh_files_is_repeatable(rebuilt, tmp_path: Path) -> None:

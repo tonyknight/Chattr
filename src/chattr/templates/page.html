@@ -1,15 +1,23 @@
 {% extends "base.html" %}
-{% block title %}{{ title }} ({{ year }}){% endblock %}
+{% block title %}{{ title }}{% endblock %}
 {% block content %}
 <header>
+<p class="back"><a href="{{ back }}">Everyone</a></p>
 <h1>{{ title }}</h1>
-<nav class="years"><a class="year home" href="{{ home }}">All years</a>{% for y in years %}<a class="year{% if y.current %} current{% endif %}" href="{{ y.href }}">{{ y.year }}</a>{% endfor %}</nav>
-</header>
-<section class="calendar" id="calendar">
-{% for month in months %}<div class="month"><div class="month-name">{{ month.name }}</div><div class="grid">{% for cell in month.cells %}{% if cell.day == 0 %}<span class="d"></span>{% elif cell.count %}<a href="#date-{{ cell.date }}" class="d l{{ cell.level }}" title="{{ cell.count }} message{{ '' if cell.count == 1 else 's' }}">{{ cell.day }}</a>{% else %}<span class="d">{{ cell.day }}</span>{% endif %}{% endfor %}</div></div>
-{% endfor %}</section>
+<p class="summary">{{ total }}, from {{ first }} to {{ last }}.</p>
+<p class="sources">{% for s in sources %}<span class="badge s-{{ s.slug }}">{{ s.name }}</span> <span class="count">{{ s.count }}</span> {% endfor %}</p>
+{% if related %}<details class="related"><summary>{{ "Groups" if kind == "person" else "People in this group" }} ({{ related | length }})</summary>
+<ul>{% for r in related %}<li>{% if r.href %}<a href="{{ r.href }}">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}</li>{% endfor %}</ul></details>
+{% endif %}{% if mail %}<details class="mail-list"><summary>Mail ({{ mail | length }})</summary>
+<ul>{% for m in mail %}<li><a href="{{ m.href }}">{{ m.title }}</a></li>{% endfor %}</ul></details>
+{% endif %}</header>
+<nav class="years" aria-label="Years">{% for y in years %}<a class="year" href="#y-{{ y.year }}">{{ y.year }}</a>{% endfor %}<a class="year latest" href="#end">Latest</a></nav>
 <main>
-{% for day in days %}<h2 class="date-separator" id="date-{{ day.date }}"><a href="#top" title="Back to the top">{{ day.label }}</a></h2>
+{% for y in years %}<section class="year-block" id="y-{{ y.year }}" data-year="{{ y.year }}">
+<h2 class="year-title">{{ y.year }} <span class="count">{{ y.count }}</span></h2>
+<div class="calendar" id="cal-{{ y.year }}"><div class="months">{% for month in y.months %}<div class="month"><div class="month-name">{{ month.name }}</div><div class="grid">{% for cell in month.cells %}{% if cell.day == 0 %}<span class="d"></span>{% elif cell.count %}<a href="#date-{{ cell.date }}" class="d l{{ cell.level }}" title="{{ cell.count }} message{{ '' if cell.count == 1 else 's' }}">{{ cell.day }}</a>{% else %}<span class="d">{{ cell.day }}</span>{% endif %}{% endfor %}</div></div>{% endfor %}</div></div>
+{% for day in y.days %}<div class="day">
+<h3 class="date-separator" id="date-{{ day.date }}"><a href="#top" title="Back to the top">{{ day.label }}</a></h3>
 {% for e in day.entries %}<article class="entry {{ e.direction }} k-{{ e.kind }}" id="m-{{ e.id }}">
 <div class="meta"><span class="badge s-{{ e.service_slug }}">{{ e.service }}</span><span class="author">{{ e.author }}</span><time datetime="{{ e.iso }}">{{ e.time }}</time> <span class="offset">{{ e.offset }}</span>{% for mark in e.marks %} <span class="mark">{{ mark }}</span>{% endfor %}</div>
 {% if e.reply %}<div class="reply">In reply to <a href="{{ e.reply.href }}">{{ e.reply.author }}{% if e.reply.author %}: {% endif %}{{ e.reply.text }}</a></div>
@@ -20,14 +28,16 @@
 {% if e.kind not in ('call', 'voicemail') and e.body %}<div class="body">{{ e.body | nl2br }}</div>{% endif %}
 {% if e.edited %}<details class="edits"><summary>Edited{% if e.edits %} ({{ e.edits | length }} earlier version{{ "" if e.edits | length == 1 else "s" }}){% endif %}</summary>{% for v in e.edits %}<div class="edit"><span class="note">{{ v.at }}</span> {{ v.text | nl2br }}</div>{% endfor %}</details>
 {% endif %}{% if e.translation %}<div class="translation">{{ e.translation | nl2br }}</div>{% endif %}
-{% for a in e.attachments %}<div class="attachment">{% if a.href and a.kind == 'image' %}<a href="{{ a.href }}"><img src="{{ a.href }}" alt="{{ a.name }}" loading="lazy"></a>{% elif a.href and a.kind == 'video' %}<video controls preload="none"><source src="{{ a.href }}"></video>{% elif a.href and a.kind == 'audio' %}<audio controls preload="none">
+{% for a in e.attachments %}<div class="attachment">{% if a.href and a.kind == 'image' %}<a href="{{ a.href }}"><img src="{{ a.href }}" alt="{{ a.name }}" loading="lazy" decoding="async"></a>{% elif a.href and a.kind == 'video' %}<video controls preload="none"><source src="{{ a.href }}"></video>{% elif a.href and a.kind == 'audio' %}<audio controls preload="none">
 {% if a.playable %}<source src="{{ a.playable }}" type="audio/mp4">
 {% endif %}<source src="{{ a.href }}">
 </audio>{% if a.playable %}<div class="note"><a href="{{ a.href }}">Original recording ({{ a.format }})</a></div>{% elif a.needs_copy %}<div class="note">This recording is in a format most browsers cannot play ({{ a.format }}). <a href="{{ a.href }}">Open the file</a> in an audio player.</div>{% endif %}{% elif a.href %}<a href="{{ a.href }}">{{ a.name }}</a>{% else %}<span class="missing">{{ a.name }} (file not in this archive)</span>{% endif %}</div>
 {% endfor %}{% if e.link %}<a class="link-preview" href="{{ e.link.href }}" rel="noopener noreferrer">{{ e.link.text }}</a>{% if e.link.site or e.link.summary %}<div class="note">{% if e.link.site %}{{ e.link.site }}{% endif %}{% if e.link.site and e.link.summary %} · {% endif %}{{ e.link.summary }}</div>{% endif %}{% elif e.link_text %}<span class="link-preview">{{ e.link_text }}</span>{% endif %}
 {% if e.reactions %}<div class="reactions">{% for r in e.reactions %}<span>{{ r.label }} · {{ r.who }}</span>{% endfor %}</div>{% endif %}
 </article>
-{% endfor %}{% endfor %}
+{% endfor %}</div>
+{% endfor %}</section>
+{% endfor %}<p class="end note" id="end">The latest: {{ last }}. <a href="#top">Back to the top</a></p>
 </main>
 {% endblock %}
 {% block island %}<script type="application/json" id="chattr-data">{{ island | safe }}</script>

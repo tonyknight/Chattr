@@ -105,7 +105,7 @@ def test_an_empty_or_missing_site_is_a_plain_error(tmp_path: Path, capsys) -> No
 
 
 def _a_page(site: Path) -> Path:
-    return next(p for p in sorted(site.rglob("(*) *.html")) if "Ana Costa" in p.name)
+    return next(p for p in sorted(site.rglob("*.html")) if "Ana Costa" in p.name)
 
 
 def test_damaged_or_foreign_pages_are_skipped_and_reported(
@@ -117,9 +117,9 @@ def test_damaged_or_foreign_pages_are_skipped_and_reported(
             r'(id="chattr-data">).*?(</script>)', r"\1{not json\2", damaged.read_text(), flags=re.S
         )
     )
-    other = next(p for p in sorted(site.rglob("(*) *.html")) if p != damaged)
+    other = next(p for p in sorted(site.rglob("*.html")) if p != damaged)
     other.write_text(
-        other.read_text().replace('"schema":"chattr-page-1"', '"schema":"chattr-page-9"')
+        other.read_text().replace('"schema":"chattr-page-2"', '"schema":"chattr-page-9"')
     )
     (site / "notes.html").write_text("<html><body>hello</body></html>")
     target = tmp_path / "r.sqlite"

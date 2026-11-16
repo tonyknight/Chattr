@@ -79,7 +79,7 @@ def test_convert_to_the_service_folder_with_html(
     assert _menu(chattr_root, monkeypatch, answers) == 0
     folder = chattr_root / "Output" / "Messenger"
     assert list(folder.glob("*.json")) and (folder / "index.html").is_file()
-    assert list(folder.rglob("(*) *.html"))
+    assert list(folder.rglob("*.html"))
     assert not (chattr_root / "Database" / "chattr.sqlite").exists() or not _rows(chattr_root)
 
 
@@ -122,7 +122,7 @@ def test_generate_html_from_the_archive(
     answers = ["1", "1", _whatsapp(fixture_family), "", "", "", "2", EXIT]
     assert _menu(chattr_root, monkeypatch, answers) == 0
     site = chattr_root / "Output" / "Chattr"
-    assert (site / "index.html").is_file() and list(site.rglob("(*) *.html"))
+    assert (site / "index.html").is_file() and list(site.rglob("*.html"))
 
 
 def test_imessage_tools(

@@ -1,4 +1,5 @@
-"""Person and group pages: escaped content, anchors, badges, calendar, entries, links, data island."""
+"""Person and group pages (one each, every year): escaped content, anchors, badges, calendars,
+entries, links, data island."""
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from fixtures import family
 from chattr.database_manager import DatabaseManager
 from chattr.pages import render_pages
 from chattr.records import AttachmentRecord, ConversationRecord, MessageRecord, ReactionRecord
-from chattr.render import Renderer
+from chattr.render import Renderer, compact, expand
 
 
 @pytest.fixture(scope="module")
@@ -33,33 +34,48 @@ def site(full_archive, tmp_path_factory: pytest.TempPathFactory):
     return renderer, out, written
 
 
-def _page(site, kind: str, title: str, year: int) -> tuple[Path, str]:
-    renderer, out, _ = site
-    spec = next(p for p in renderer.pages if (p.kind, p.title, p.year) == (kind, title, year))
-    path = out / spec.path
-    return path, path.read_text(encoding="utf-8")
+def _spec(site, kind: str, title: str):
+    renderer, _, _ = site
+    return next(p for p in renderer.pages if (p.kind, p.title) == (kind, title))
+
+
+def _page(site, kind: str, title: str, year: int | None = None) -> tuple[Path, str]:
+    """The page, or (with a year) its head, that year's calendar and that year's messages."""
+    _, out, _ = site
+    path = out / _spec(site, kind, title).path
+    text = path.read_text(encoding="utf-8")
+    if year is None:
+        return path, text
+    head = text[: text.index("<main>")]
+    block = text[text.index(f'<section class="year-block" id="y-{year}"') :]
+    block = block[: block.index("</section>")]
+    return path, head + block
 
 
 def test_every_person_and_group_page_is_written_at_its_planned_path(site) -> None:
     renderer, out, written = site
     planned = {out / p.path for p in renderer.pages if p.kind in ("person", "group")}
     assert planned <= set(written) and all(p.is_file() for p in planned)
-    assert (out / "People" / family.ANA.name / f"(2023) {family.ANA.name}.html").is_file()
+    assert (out / "People" / family.ANA.name / f"{family.ANA.name}.html").is_file()
+    assert not (out / "People" / family.ANA.name / "index.html").exists()  # one page, not a set
 
 
 def test_pages_are_self_contained(site) -> None:
-    _, text = _page(site, "person", family.ANA.name, 2023)
+    _, text = _page(site, "person", family.ANA.name)
     assert "<link " not in text and "<script src" not in text and "@import" not in text
     assert "<style>" in text and "prefers-color-scheme: dark" in text
-    assert text.lower().count("</script>") == 1  # only the data island
+    assert text.lower().count("</script>") == 1  # the data island: the page runs no script
+
+
+def test_a_long_page_lays_out_only_what_is_on_screen(site) -> None:
+    _, text = _page(site, "person", family.ANA.name)
+    assert re.search(r"\.day \{[^}]*content-visibility:\s*auto", text)
+    assert 'loading="lazy"' in text and 'preload="none"' in text
 
 
 def test_every_message_has_one_stable_anchor(site) -> None:
-    renderer, _, _ = site
-    spec = next(
-        p for p in renderer.pages if (p.kind, p.title, p.year) == ("person", family.ANA.name, 2023)
-    )
-    _, text = _page(site, "person", family.ANA.name, 2023)
+    spec = _spec(site, "person", family.ANA.name)
+    _, text = _page(site, "person", family.ANA.name)
     for message_id in spec.message_ids:
         assert text.count(f'id="m-{html.escape(message_id)}"') == 1
 
@@ -77,6 +93,8 @@ def test_dates_have_separators_and_the_calendar_links_to_them(site) -> None:
     assert re.search(r'<a href="#date-2024-03-01"[^>]*title="6 messages"', text)
     assert 'href="#date-2024-03-05"' not in text  # a day with no messages is not a link
     assert text.count('class="month"') == 12
+    _, whole = _page(site, "person", family.ANA.name)
+    assert len(re.findall(r'class="calendar[ "]', whole)) == 6  # one for each of her six years
 
 
 def test_the_times_show_their_offset_precision_and_zone(site) -> None:
@@ -124,13 +142,17 @@ def test_a_shared_link_is_a_link_and_not_part_of_the_text(site) -> None:
     assert "[Shared Link" not in text
 
 
-def test_year_navigation_links_the_other_years(site) -> None:
-    path, text = _page(site, "person", family.ANA.name, 2023)
-    links = re.findall(r'<a class="year[^"]*" href="([^"]+)">(\d{4})</a>', text)
-    assert [y for _, y in links] == ["2016", "2018", "2022", "2023", "2024", "2025"]
-    for href, _ in links:
-        assert (path.parent / unquote(href)).is_file()
-    assert 'class="year current"' in text
+def test_the_year_bar_goes_to_each_year_on_the_page(site) -> None:
+    _, text = _page(site, "person", family.ANA.name)
+    links = re.findall(r'<a class="year" href="#y-(\d{4})">(\d{4})</a>', text)
+    assert [y for y, _ in links] == ["2016", "2018", "2022", "2023", "2024", "2025"]
+    for year, _ in links:
+        assert f'<section class="year-block" id="y-{year}"' in text
+    assert 'href="#end">Latest</a>' in text and 'id="end"' in text
+    # each year begins with its own calendar
+    for year, _ in links:
+        section = text[text.index(f'id="y-{year}"') :]
+        assert section.index(f'id="cal-{year}"') < section.index('class="day"')
 
 
 def test_system_notices_and_owner_messages_are_styled_apart(site) -> None:
@@ -141,15 +163,16 @@ def test_system_notices_and_owner_messages_are_styled_apart(site) -> None:
 
 def test_the_data_island_matches_the_planned_document(site) -> None:
     renderer, out, _ = site
-    spec = next(
-        p for p in renderer.pages if (p.kind, p.title, p.year) == ("person", family.ANA.name, 2023)
-    )
+    spec = _spec(site, "person", family.ANA.name)
     text = (out / spec.path).read_text(encoding="utf-8")
     island = re.search(
         r'<script type="application/json" id="chattr-data">(.*?)</script>', text, re.S
     )
     assert island is not None
-    assert json.loads(island.group(1)) == json.loads(json.dumps(renderer.document(spec)))
+    stored = json.loads(island.group(1))
+    assert stored == json.loads(json.dumps(compact(renderer.document(spec))))
+    assert expand(stored) == json.loads(json.dumps(renderer.document(spec)))
+    assert '"translation":null' not in island.group(1)  # empty fields are left out
 
 
 # --- Hostile content ------------------------------------------------------------------------
@@ -202,7 +225,7 @@ def test_html_and_script_in_content_render_as_text(hostile) -> None:
     assert "&lt;i&gt;Mallory&lt;/i&gt;" in text and "<i>Mallory</i>" not in text
     assert text.lower().count("</script>") == 1  # the island is the only script
     assert "<br>" in text and "second line" in text
-    assert "<title>&lt;i&gt;Mallory&lt;/i&gt; (2024)</title>" in text
+    assert "<title>&lt;i&gt;Mallory&lt;/i&gt;</title>" in text
 
 
 def test_the_data_island_cannot_break_out(hostile) -> None:
@@ -292,7 +315,7 @@ def test_dates_are_orange_and_readable(site) -> None:
 def test_clicking_a_date_goes_back_to_the_top(site) -> None:
     _, page = _page(site, "person", family.ANA.name, 2024)
     assert '<body id="top">' in page
-    headings = re.findall(r'<h2 class="date-separator" id="date-[\d-]+">(.*?)</h2>', page)
+    headings = re.findall(r'<h3 class="date-separator" id="date-[\d-]+">(.*?)</h3>', page)
     assert headings
     for heading in headings:
         assert re.fullmatch(r'<a href="#top" title="Back to the top">[^<]+</a>', heading)
@@ -301,48 +324,42 @@ def test_clicking_a_date_goes_back_to_the_top(site) -> None:
 # --- A page for each person, and pages that go away ----------------------------------------------
 
 
-def _home(site, title: str) -> str:
-    renderer, out, _ = site
-    folder = next(p.folder for p in renderer.pages if p.title == title and p.kind != "mail")
-    return (out / folder / "index.html").read_text(encoding="utf-8")
-
-
-def test_every_person_has_an_index_of_all_that_came_from_them(site) -> None:
+def test_a_persons_page_sums_up_all_that_came_from_them(site) -> None:
     renderer, out, written = site
-    page = _home(site, family.ANA.name)
+    _, page = _page(site, "person", family.ANA.name)
     assert f"<h1>{family.ANA.name}</h1>" in page
-    years = sorted(p.year for p in renderer.pages if p.title == family.ANA.name)
-    for year in years:
-        assert f'href="({year})%20{family.ANA.name.replace(" ", "%20")}.html"' in page
     for service in ("iMessage", "WhatsApp", "Google Voice", "Voicemail"):
-        assert f">{service}" in page  # every source she is in, with its count
-    total = sum(len(p.message_ids) for p in renderer.pages if p.title == family.ANA.name)
-    assert f"{total} items" in page
-    assert out / "People" / family.ANA.name / "index.html" in written
+        assert f">{service}</span>" in page  # every source she is in, with its count
+    total = len(_spec(site, "person", family.ANA.name).message_ids)
+    assert f"{total} items, from 2016-" in page
+    assert out / "People" / family.ANA.name / f"{family.ANA.name}.html" in written
 
 
-def test_a_persons_index_links_their_groups_and_their_mail(site) -> None:
-    page = _home(site, family.JOAO.name)
-    assert f'href="../../Groups/{family.GROUP_NAME.replace(" ", "%20")}/index.html"' in page
-    assert "<h2>Mail</h2>" in page and 'href="../../Mail/' in page
+def test_a_persons_page_links_their_groups_and_their_mail(site) -> None:
+    _, page = _page(site, "person", family.JOAO.name)
+    group = family.GROUP_NAME.replace(" ", "%20")
+    assert f'href="../../Groups/{group}/{group}.html"' in page
+    assert "<summary>Mail (" in page and 'href="../../Mail/' in page
 
 
-def test_a_groups_index_links_its_members(site) -> None:
-    page = _home(site, family.GROUP_NAME)
+def test_a_groups_page_links_its_members(site) -> None:
+    _, page = _page(site, "group", family.GROUP_NAME)
     assert "People in this group" in page
-    assert f'href="../../People/{family.ANA.name.replace(" ", "%20")}/index.html"' in page
+    ana = family.ANA.name.replace(" ", "%20")
+    assert f'href="../../People/{ana}/{ana}.html"' in page
 
 
-def test_year_pages_link_back_to_the_persons_index_and_the_index_to_everyone(site) -> None:
-    _, year_page = _page(site, "person", family.ANA.name, 2024)
-    assert '<a class="year home" href="index.html">All years</a>' in year_page
-    assert '<a href="../../index.html">Everyone</a>' in _home(site, family.ANA.name)
+def test_a_page_links_back_to_everyone(site) -> None:
+    _, page = _page(site, "person", family.ANA.name)
+    assert '<a href="../../index.html">Everyone</a>' in page
 
 
-def test_the_top_index_links_each_persons_index(site) -> None:
+def test_the_top_index_links_each_persons_page(site) -> None:
     _, out, _ = site
     text = (out / "index.html").read_text(encoding="utf-8")
-    assert f'<a href="People/{family.ANA.name.replace(" ", "%20")}/index.html">' in text
+    ana = family.ANA.name.replace(" ", "%20")
+    assert f'<a href="People/{ana}/{ana}.html">{family.ANA.name}</a>' in text
+    assert "2016–2025" in text  # the years her page spans
 
 
 def test_pages_that_are_no_longer_wanted_are_removed(tmp_path: Path) -> None:
@@ -365,10 +382,10 @@ def test_pages_that_are_no_longer_wanted_are_removed(tmp_path: Path) -> None:
         db.commit()
         render_pages(Renderer(db), out)
         old = out / "People" / "+15550101"
-        assert (old / "(2024) +15550101.html").is_file() and (old / "index.html").is_file()
+        assert (old / "+15550101.html").is_file()
         (old / "notes.txt").write_text("mine")  # something a person put there
         db.connection.execute("UPDATE handles SET person = ?", (family.ANA.name,))
         db.commit()
         render_pages(Renderer(db), out)
-    assert (out / "People" / family.ANA.name / "index.html").is_file()
+    assert (out / "People" / family.ANA.name / f"{family.ANA.name}.html").is_file()
     assert sorted(p.name for p in old.iterdir()) == ["notes.txt"]  # only Chattr's pages went

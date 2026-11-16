@@ -122,7 +122,7 @@ def test_convert_imessage_imports_into_the_archive_by_default(
     assert _archived(chattr_root) == 7
     site = chattr_root / "Output" / "Chattr"
     assert (site / "index.html").is_file()
-    assert (site / "Groups" / family.GROUP_NAME / f"(2024) {family.GROUP_NAME}.html").is_file()
+    assert (site / "Groups" / family.GROUP_NAME / f"{family.GROUP_NAME}.html").is_file()
     assert not (chattr_root / "Output" / "iMessage" / "imessage_export.json").exists()
     assert _run(chattr_root, "convert", "imessage", db, "--spam-mode", "disabled") == 0
     assert "0 new" in capsys.readouterr().out and _archived(chattr_root) == 7
@@ -171,7 +171,7 @@ def test_html_renders_the_archive(chattr_root: Path, fixture_family: FamilyExpor
     _run(chattr_root, "convert", "whatsapp", _whatsapp(fixture_family))
     out = chattr_root / "site"
     assert _run(chattr_root, "html", "--out", str(out)) == 0
-    assert (out / "index.html").is_file() and list(out.rglob("(*) *.html"))
+    assert (out / "index.html").is_file() and list(out.rglob("*.html"))
     assert _run(chattr_root, "html", "--out", str(out), "--attachments-dir", str(out)) == 0
 
 

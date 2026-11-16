@@ -2,15 +2,14 @@
 
 Pages are organized for people, not platforms (see the Requirements):
 
-    People/<Person>/index.html                       everything from this person, by year and source
-    People/<Person>/(YYYY) <Person>.html             every platform, one page per year
+    People/<Person>/<Person>.html                    everything from this person, every platform
     People/<Person>/<Service>/…                      the files each source brought (see `filing`)
-    Groups/<Group>/index.html, (YYYY) <Group>.html, <Service>/…
+    Groups/<Group>/<Group>.html, <Service>/…
     Mail/<YYYY>/(YYYY-MM-DD) <sender> — <subject>.html     one page per mail thread
 
 A conversation belongs to its *counterpart*: the non-owner person behind its handles, or the handle
 itself while it has no person, so one person's iMessage, WhatsApp, Google Voice, voicemail and
-Messenger history share one page set. Two-person chats need the owner configured so the counterpart
+Messenger history share one page. Two-person chats need the owner configured so the counterpart
 can be told from the owner (on WhatsApp and Messenger the owner is just another name); without it a
 chat falls back to its own name. Years and dates are the event's **local** time: UTC plus the stored
 offset (UTC as stored when the zone is unknown).
@@ -29,7 +28,64 @@ from typing import Any, Optional
 from chattr.attachment_manager import safe_name
 from chattr.database_manager import DatabaseManager
 
-SCHEMA = "chattr-page-1"
+#: The data island's format. Version 2 leaves out a message's fields that hold nothing (see
+#: `compact`); version 1 pages, which list every field, are still read.
+SCHEMA = "chattr-page-2"
+SCHEMAS = ("chattr-page-1", SCHEMA)
+
+#: What a field of a message, an attachment or a reaction holds when the island leaves it out.
+_EMPTY: dict[str, dict[str, Any]] = {
+    "message": {
+        "source_id": None, "tz_offset_minutes": None, "language": None, "translation": None,
+        "transcript": None, "reply_to": None, "edit_history": None, "forwarded_from": None,
+        "delivery_status": None, "body": None, "tz_assumed": False, "is_from_owner": False,
+        "sender": None, "mail_headers": {}, "service_specific": {}, "attachments": [],
+        "reactions": [], "version": 1,
+    },
+    "attachment": {
+        "archival_filename": None, "mime_type": None, "storage_path": None, "processing_info": {},
+    },
+    "reaction": {"target_part": None, "emoji": None, "sender": None, "timestamp_utc": None},
+}  # fmt: skip
+
+
+def _drop(row: dict[str, Any], kind: str) -> dict[str, Any]:
+    empty = _EMPTY[kind]
+    return {
+        k: v
+        for k, v in row.items()
+        if not (k in empty and v == empty[k] and type(v) is type(empty[k]))
+    }
+
+
+def _fill(row: dict[str, Any], kind: str) -> dict[str, Any]:
+    return {**{k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+               for k, v in _EMPTY[kind].items()}, **row}  # fmt: skip
+
+
+def compact(document: dict[str, Any]) -> dict[str, Any]:
+    """The document as a page stores it: a field that holds nothing is left out (a long page holds
+    tens of thousands of messages, and most of their fields are empty)."""
+    messages = []
+    for message in document["messages"]:
+        row = dict(message)
+        row["attachments"] = [_drop(a, "attachment") for a in message.get("attachments", [])]
+        row["reactions"] = [_drop(r, "reaction") for r in message.get("reactions", [])]
+        messages.append(_drop(row, "message"))
+    return {**document, "schema": SCHEMA, "messages": messages}
+
+
+def expand(document: dict[str, Any]) -> dict[str, Any]:
+    """A stored document with every field present again (the reverse of `compact`)."""
+    messages = []
+    for message in document.get("messages", []):
+        row = _fill(message, "message")
+        row["attachments"] = [_fill(a, "attachment") for a in row["attachments"]]
+        row["reactions"] = [_fill(r, "reaction") for r in row["reactions"]]
+        messages.append(row)
+    return {**document, "messages": messages}
+
+
 MAIL_SERVICE = "Mail"
 PEOPLE = "People"
 GROUPS = "Groups"
@@ -48,7 +104,7 @@ def local_moment(timestamp_utc: str, offset_minutes: Optional[int]) -> datetime:
 class PageSpec:
     kind: str  # "person" | "group" | "mail"
     title: str
-    year: int
+    year: int  # the year of its first message
     folder: str
     filename: str
     conversation_ids: list[str] = field(default_factory=list)
@@ -137,12 +193,12 @@ class Renderer:
         return _chat_label(conversation["name"] or conversation["source_id"])
 
     def _plan(self) -> list[PageSpec]:
-        pages: dict[tuple[str, str, int], PageSpec] = {}
+        pages: dict[tuple[str, str], PageSpec] = {}
         for conversation_id, messages in self._by_conversation().items():
             conversation = self.conversations[conversation_id]
             if conversation["service"] == MAIL_SERVICE:
                 spec = self._mail_page(conversation, messages)
-                pages[("mail", spec.path, spec.year)] = spec
+                pages[("mail", spec.path)] = spec
                 continue
             group = conversation["type"] == "group"
             title = (
@@ -153,20 +209,18 @@ class Renderer:
             kind = "group" if group else "person"
             folder_name = safe_name(title, "Unknown")
             folder = f"{GROUPS}/{folder_name}" if group else f"{PEOPLE}/{folder_name}"
-            for message in messages:
-                year = message["local"].year
-                key = (kind, folder, year)
-                page = pages.get(key)
-                if page is None:
-                    page = pages[key] = PageSpec(
-                        kind, title, year, folder, f"({year}) {folder_name}.html"
-                    )
-                if conversation_id not in page.conversation_ids:
-                    page.conversation_ids.append(conversation_id)
-                page.message_ids.append(message["id"])
+            page = pages.get((kind, folder))
+            if page is None:
+                page = pages[(kind, folder)] = PageSpec(
+                    kind, title, 0, folder, f"{folder_name}.html"
+                )
+            page.conversation_ids.append(conversation_id)
+            page.message_ids.extend(message["id"] for message in messages)
         for spec in pages.values():
             spec.message_ids.sort(key=lambda m: (self.messages[m]["timestamp_utc"], m))
-        return sorted(pages.values(), key=lambda p: (p.folder, p.year, p.filename))
+            if spec.kind != "mail":
+                spec.year = min(self.messages[m]["local"].year for m in spec.message_ids)
+        return sorted(pages.values(), key=lambda p: (p.folder, p.filename))
 
     def _mail_page(self, conversation: dict[str, Any], messages: list[dict[str, Any]]) -> PageSpec:
         first = messages[0]
@@ -290,4 +344,7 @@ def _loads(value: Optional[str]) -> Any:
     return json.loads(value) if value else {}
 
 
-__all__ = ["GROUPS", "PEOPLE", "PageSpec", "Renderer", "local_moment", "SCHEMA"]
+__all__ = [
+    "GROUPS", "PEOPLE", "PageSpec", "Renderer", "local_moment", "SCHEMA", "SCHEMAS", "compact",
+    "expand",
+]  # fmt: skip
