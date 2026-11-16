@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
-from chattr.parsers.messenger_parser import _fix_facebook_encoding
+from chattr.parsers.messenger_parser import DEACTIVATED, _fix_facebook_encoding
 
 PathLike = Union[str, Path]
 
@@ -67,13 +67,20 @@ class Friends:
         return self.names.get(_key(name))
 
     def in_conversation(self, conversation: Any) -> bool:
-        """True when someone in the conversation is on the lists. A thread that names nobody
-        is kept: there is no telling who it was with."""
+        """True when someone in the conversation is on the lists, or is an account that was
+        deactivated (it may have been a friend; the owner decides who it was). A thread that names
+        nobody is kept: there is no telling who it was with."""
         people = list(getattr(conversation, "participants", ()) or ())
-        return not people or any(self.knows(person) for person in people)
+        return not people or any(self.knows(person) or _deactivated(person) for person in people)
 
     def __len__(self) -> int:
         return len(self.names)
+
+
+def _deactivated(name: Optional[str]) -> bool:
+    """`Facebook user` or `Facebook user (<thread>)`: an account Meta no longer names."""
+    text = (name or "").strip().casefold()
+    return any(text == word or text.startswith(word + " (") for word in DEACTIVATED)
 
 
 def find_friend_files(start: PathLike) -> list[Path]:

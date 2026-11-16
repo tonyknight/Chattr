@@ -9,6 +9,10 @@ Each message is a dict: `timestamp` (aware UTC), `precision`, `author`, `message
 person wrote, or None), `type`, and where they apply `attachments` (each with `path`, `name`,
 `kind`), `reactions` (`emoji`, `actor`), `shared_link` with `link_text`, `call_duration`, `unsent`.
 After `parse`, `thread` holds the thread's title, participants and `thread_path`.
+
+An account that was deleted or deactivated is shown by Meta as "Facebook user" (or "Instagram
+user"), the same words for everyone. Each such person is given a name of their own per thread,
+`Facebook user (<thread folder>)`, so that each can later be linked to who they really were.
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ _ATTACHMENT_LISTS = (
     ("files", "document"),
     ("gifs", "image"),
 )
+
+
+#: How Meta shows an account that was deleted or deactivated (case aside).
+DEACTIVATED = frozenset({"facebook user", "instagram user"})
 
 
 def _fix_facebook_encoding(text: Optional[str]) -> str:
@@ -93,7 +101,25 @@ class MessengerParser(BaseParser):
 
         messages = [m for m in (self._message(item, first) for item in raw) if m]
         messages.sort(key=lambda m: m["timestamp"])  # stable: equal times keep their order
+        self._tell_apart_deactivated(messages)
         return messages
+
+    def _tell_apart_deactivated(self, messages: list[dict[str, Any]]) -> None:
+        """Give "Facebook user" a name of its own in this thread (see the module text)."""
+        folder = str(self.thread.get("thread_path") or "").rstrip("/").rsplit("/", 1)[-1]
+
+        def own(name: Optional[str]) -> Optional[str]:
+            if name and name.strip().casefold() in DEACTIVATED and folder:
+                return f"{name.strip()} ({folder})"
+            return name
+
+        self.thread["participants"] = [own(p) for p in self.thread.get("participants", [])]
+        if (self.thread.get("title") or "").strip().casefold() in DEACTIVATED:
+            self.thread["title"] = own(self.thread["title"])
+        for message in messages:
+            message["author"] = own(message.get("author"))
+            for reaction in message.get("reactions", []):
+                reaction["actor"] = own(reaction.get("actor"))
 
     # --- One message ------------------------------------------------------------------------
 
