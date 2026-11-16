@@ -19,7 +19,7 @@ import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Sequence, Union
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Union
 
 from chattr.config import Settings
 from chattr.pages import render_pages
@@ -465,6 +465,8 @@ def publish(
     progress: Optional[Callable[[int, int], None]] = None,
     before_pages: Optional[Callable[[], None]] = None,
     convert_images: bool = True,
+    categories: Optional[Mapping[str, str]] = None,
+    title: str = "Chattr archive",
 ) -> Optional[Published]:
     """File every attachment beside the person it came from, then draw every page.
 
@@ -485,7 +487,7 @@ def publish(
         )
         if before_pages:
             before_pages()  # filing is done; the pages come next
-        pages = render_pages(renderer, folder, roots, pages_list)
+        pages = render_pages(renderer, folder, roots, pages_list, categories, title)
     return Published(folder / "index.html", pages, filed)
 
 

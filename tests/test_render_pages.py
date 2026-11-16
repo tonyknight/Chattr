@@ -380,14 +380,15 @@ def test_a_groups_page_links_its_members(site) -> None:
 
 def test_a_page_links_back_to_everyone(site) -> None:
     _, page = _page(site, "person", family.ANA.name)
-    assert '<a href="../../index.html">Everyone</a>' in page
+    assert '<a class="home-button" href="../../index.html">&larr; All people</a>' in page
+    assert page.index("home-button") < page.index("<h1>")  # near the top
 
 
 def test_the_top_index_links_each_persons_page(site) -> None:
     _, out, _ = site
     text = (out / "index.html").read_text(encoding="utf-8")
     ana = family.ANA.name.replace(" ", "%20")
-    assert f'<a href="People/{ana}/{ana}.html">{family.ANA.name}</a>' in text
+    assert f'<a class="tile" href="People/{ana}/{ana}.html"' in text
     assert "2016–2025" in text  # the years her page spans
 
 
@@ -418,3 +419,77 @@ def test_pages_that_are_no_longer_wanted_are_removed(tmp_path: Path) -> None:
         render_pages(Renderer(db), out)
     assert (out / "People" / family.ANA.name / f"{family.ANA.name}.html").is_file()
     assert sorted(p.name for p in old.iterdir()) == ["notes.txt"]  # only Chattr's pages went
+
+
+# --- The index: categories, tiles, dashboard -------------------------------------------------------
+
+
+def _tiles(text: str) -> dict[str, str]:
+    """{name on the tile: its data-category}."""
+    found = re.findall(
+        r'<a class="tile" href="People/[^"]+" data-category="([^"]*)"[^>]*>\s*'
+        r'<span class="face[^"]*"[^>]*>[^<]*</span><span class="name">([^<]+)</span>',
+        text,
+    )
+    return {html.unescape(name): category for category, name in found}
+
+
+def test_people_are_tiles_sorted_into_categories(full_archive, tmp_path: Path) -> None:
+    with DatabaseManager(full_archive.database) as db:
+        render_pages(
+            Renderer(db), tmp_path, categories={family.ANA.name: "family"}, title="Our box"
+        )
+    text = (tmp_path / "index.html").read_text(encoding="utf-8")
+    tiles = _tiles(text)
+    assert tiles[family.ANA.name] == "family"
+    assert tiles[family.JOAO.name] == ""  # named, not sorted yet: unassigned
+    assert tiles[family.UNKNOWN_HANDLE] == "unrecognized"  # a number nobody named
+    assert f'data-name="{family.ANA.name}"' in text
+    assert f'data-name="{family.UNKNOWN_HANDLE}"' not in text  # only named people can be sorted
+    for view in ("all", "family", "friends", "business", "acquaintance", "unrecognized",
+                 "unassigned", "groups", "mail"):  # fmt: skip
+        assert f'data-view="{view}"' in text
+    assert "<title>Our box</title>" in text
+    assert 'id="count"' in text and 'id="picked"' in text  # the footer
+
+
+def test_a_tile_shows_initials_counts_and_a_tip_with_each_source(site) -> None:
+    _, out, _ = site
+    text = (out / "index.html").read_text(encoding="utf-8")
+    start = text.index(f'<span class="name">{family.ANA.name}</span>')
+    tile = text[text.rindex('<a class="tile"', 0, start) : text.index("</a>", start)]
+    assert '<span class="face h' in tile and ">AC</span>" in tile
+    assert 'role="tooltip"' in tile
+    for service in ("WhatsApp", "iMessage", "Google Voice", "Voicemail"):
+        assert f"{service}<b>" in tile
+
+
+def test_the_dashboard_counts_each_source_and_its_files(site) -> None:
+    renderer, out, _ = site
+    text = (out / "index.html").read_text(encoding="utf-8")
+    dashboard = text[
+        text.index('<section class="dashboard"') : text.index(
+            "</section>", text.index('<section class="dashboard"')
+        )
+    ]
+    for service in {m["service"] for m in renderer.messages.values()}:
+        assert f">{service}</span></td>" in dashboard
+    assert f"<b>{len(renderer.messages)}</b><span>items</span>" in dashboard
+    assert re.search(r"<td class=\"num\">[\d,.]+ (bytes|KB|MB)</td>", dashboard)
+    assert "built-in method" not in text
+
+
+def test_the_index_script_is_one_caixa_allows(site) -> None:
+    import base64
+    import hashlib
+
+    _, out, _ = site
+    text = (out / "index.html").read_text(encoding="utf-8")
+    (script,) = re.findall(r"<script>(.*?)</script>", text, re.S)
+    digest = base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode()
+    allowed = (
+        Path(__file__).resolve().parents[3] / "harness" / "src" / "host" / "page-scripts.ts"
+    ).read_text(encoding="utf-8")
+    assert (
+        f"'sha256-{digest}'" in allowed
+    ), f"index.js changed: put sha256-{digest} in harness/src/host/page-scripts.ts"

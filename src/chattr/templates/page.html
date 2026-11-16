@@ -2,7 +2,7 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 <header>
-<p class="back"><a href="{{ back }}">Everyone</a></p>
+<a class="home-button" href="{{ back }}">&larr; All people</a>
 <h1>{{ title }}</h1>
 <p class="summary">{{ total }}, from {{ first }} to {{ last }}.</p>
 <p class="sources">{% for s in sources %}<span class="badge s-{{ s.slug }}">{{ s.name }}</span> <span class="count">{{ s.count }}</span> {% endfor %}</p>

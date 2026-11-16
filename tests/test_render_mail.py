@@ -86,19 +86,19 @@ def test_the_index_links_every_page(site) -> None:
     index = out / "index.html"
     assert index in written and index.is_file()
     text = index.read_text(encoding="utf-8")
-    hrefs = [unquote(h) for h in re.findall(r'<a href="([^"#]+\.html)"', text)]
+    hrefs = [unquote(h) for h in re.findall(r'<a (?:class="tile" )?href="([^"#]+\.html)"', text)]
     assert set(hrefs) == {p.path for p in renderer.pages} and len(hrefs) == len(set(hrefs))
     for href in hrefs:
         assert (out / href).is_file()
     assert family.ANA.name in text and family.GROUP_NAME in text and "Fotos de São Martinho" in text
-    assert "<h2>People</h2>" in text and "<h2>Groups</h2>" in text and "<h2>Mail</h2>" in text
+    assert 'aria-label="People"' in text and "<h2>Groups</h2>" in text and "<h2>Mail</h2>" in text
 
 
 def test_the_index_counts_messages_per_page(site) -> None:
     renderer, out, _ = site
     text = (out / "index.html").read_text(encoding="utf-8")
     page = next(p for p in renderer.pages if (p.kind, p.title) == ("person", family.ANA.name))
-    assert f'<span class="count">{len(page.message_ids)} items, 2016–2025</span>' in text
+    assert f'<span class="meta">{len(page.message_ids)} items · 2016–2025</span>' in text
     assert "1 message<" in text and "1 messages" not in text  # a mail thread of one
 
 
@@ -151,7 +151,8 @@ def test_hostile_mail_renders_as_text(hostile) -> None:
 def test_a_hostile_name_is_safe_in_the_index_and_the_file_name(hostile) -> None:
     _, out, written = hostile
     index = (out / "index.html").read_text(encoding="utf-8")
-    assert "<script" not in index.replace('<script type="application/json"', "")
+    scripts = re.findall(r"<script>(.*?)</script>", index, re.S)
+    assert len(scripts) == 1 and "people.categorize" in scripts[0]  # only the page's own
     assert "<script>alert" not in index
     mail = next(p for p in written if "Mail" in p.parts)
     assert not any(ch in mail.name for ch in '<>"\\|?*')

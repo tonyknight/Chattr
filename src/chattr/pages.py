@@ -26,7 +26,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence, Union
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 from urllib.parse import quote, urlparse
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -403,31 +403,189 @@ def _mail_page(site: _Site, spec: PageSpec) -> str:
     )
 
 
-def _index(site: _Site) -> str:
-    """The index: every person, group and mail thread, each linking to its page."""
+#: The categories the index sorts people into (a person in none is "unassigned"), and their names.
+CATEGORIES = (
+    ("family", "Family"),
+    ("friends", "Friends"),
+    ("business", "Business"),
+    ("acquaintance", "Acquaintances"),
+    ("unrecognized", "Unrecognized"),
+)
+_HUES = 8
+
+
+def _initials(title: str) -> str:
+    words = [w for w in re.split(r"[\s\-_.]+", title) if w and (w[0].isalnum())]
+    if not words:
+        return "#"
+    if not any(c.isalpha() for c in title):  # a number: its last two digits
+        digits = re.sub(r"\D", "", title)
+        return digits[-2:] or "#"
+    letters = [w[0] for w in words if w[0].isalpha()] or [words[0][0]]
+    return (letters[0] + (letters[-1] if len(letters) > 1 else "")).upper()
+
+
+def _hue(title: str) -> str:
+    return f"h{sum(title.encode('utf-8')) % _HUES}"
+
+
+def _size(bytes_: int) -> str:
+    size = float(bytes_)
+    for unit in ("bytes", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:,.0f} {unit}" if unit == "bytes" else f"{size:,.1f} {unit}"
+        size /= 1024
+    return f"{size:,.1f} TB"
+
+
+def _named(renderer: Renderer, spec: PageSpec) -> bool:
+    """Whether a person's page is someone named (not a number, an address or an account that
+    no longer has a name, which are 'unrecognized' until someone names them)."""
+    handles: set[int] = set()
+    for conversation_id in spec.conversation_ids:
+        handles |= set(renderer.participants.get(conversation_id, []))
+    handles |= {
+        renderer.messages[m]["sender_handle_id"]
+        for m in spec.message_ids
+        if renderer.messages[m]["sender_handle_id"]
+    }
+    return any(renderer.handles[h]["person"] for h in handles if h not in renderer.owner_handles)
+
+
+def _card(renderer: Renderer, page: PageSpec, href: str) -> dict[str, Any]:
+    """What a tile shows about a person or group: counts, years, and each source's share."""
+    by_source: dict[str, int] = {}
+    for message_id in page.message_ids:
+        service = renderer.messages[message_id]["service"]
+        by_source[service] = by_source.get(service, 0) + 1
+    first = renderer.messages[page.message_ids[0]]["local"]
+    last = renderer.messages[page.message_ids[-1]]["local"]
+    return {
+        "title": page.title,
+        "href": href,
+        "count": _plural(len(page.message_ids), "item"),
+        "span": str(first.year) if first.year == last.year else f"{first.year}–{last.year}",
+        "first": f"{first:%Y-%m-%d}",
+        "last": f"{last:%Y-%m-%d}",
+        "sources": [
+            {"name": name, "slug": _slug(name), "count": f"{count:,}"}
+            for name, count in sorted(by_source.items(), key=lambda item: -item[1])
+        ],
+        "initials": _initials(page.title),
+        "hue": _hue(page.title),
+    }
+
+
+def _stats(site: _Site) -> dict[str, Any]:
+    """The dashboard: how much came from each source, and how much room its files take."""
     renderer = site.renderer
+    sources: dict[str, dict[str, Any]] = {}
+    seen_files: set[Path] = set()
+    for message in renderer.messages.values():
+        entry = sources.setdefault(
+            message["service"],
+            {
+                "items": 0,
+                "conversations": set(),
+                "files": 0,
+                "bytes": 0,
+                "first": None,
+                "last": None,
+            },
+        )
+        entry["items"] += 1
+        entry["conversations"].add(message["conversation_id"])
+        local = message["local"]
+        entry["first"] = (
+            local if entry["first"] is None or local < entry["first"] else entry["first"]
+        )
+        entry["last"] = local if entry["last"] is None or local > entry["last"] else entry["last"]
+        for attachment in renderer.attachments.get(message["id"], []):
+            file = site._file(attachment["storage_path"])
+            if file is None or file in seen_files:
+                continue
+            seen_files.add(file)
+            entry["files"] += 1
+            entry["bytes"] += file.stat().st_size
+    rows = []
+    for name, entry in sorted(sources.items(), key=lambda item: -item[1]["items"]):
+        rows.append(
+            {
+                "name": name,
+                "slug": _slug(name),
+                "items": f"{entry['items']:,}",
+                "conversations": f"{len(entry['conversations']):,}",
+                "files": f"{entry['files']:,}",
+                "size": _size(entry["bytes"]),
+                "first": f"{entry['first']:%Y-%m-%d}",
+                "last": f"{entry['last']:%Y-%m-%d}",
+            }
+        )
+    firsts = [e["first"] for e in sources.values()]
+    lasts = [e["last"] for e in sources.values()]
+    first, last = (min(firsts), max(lasts)) if firsts else (None, None)
+    pages = renderer.pages
+    return {
+        "items": f"{len(renderer.messages):,}",
+        "conversations": f"{sum(len(e['conversations']) for e in sources.values()):,}",
+        "people": f"{sum(1 for p in pages if p.kind == 'person' and _named(renderer, p)):,}",
+        "groups": f"{sum(1 for p in pages if p.kind == 'group'):,}",
+        "mail": f"{sum(1 for p in pages if p.kind == 'mail'):,}",
+        "files": f"{sum(e['files'] for e in sources.values()):,}",
+        "size": _size(sum(e["bytes"] for e in sources.values())),
+        "first": f"{first:%Y-%m-%d}" if first else "",
+        "last": f"{last:%Y-%m-%d}" if last else "",
+        "years": f"{last.year - first.year + 1:,} years" if first and last else "",
+        "span": (
+            f"{first.year}–{last.year}"
+            if first and last and first.year != last.year
+            else (str(first.year) if first else "empty")
+        ),
+        "sources": rows,
+    }
+
+
+def _index(
+    site: _Site, categories: Optional[Mapping[str, str]] = None, title: str = "Chattr archive"
+) -> str:
+    """The index: people as tiles sorted into categories, groups, mail, and the box's numbers."""
+    renderer = site.renderer
+    chosen = {name.casefold(): category for name, category in (categories or {}).items()}
+    keys = {key for key, _ in CATEGORIES}
     people: list[dict[str, Any]] = []
     groups: list[dict[str, Any]] = []
     mail: list[dict[str, Any]] = []
     for page in renderer.pages:
-        count = len(page.message_ids)
         href = quote(page.path, safe="/()")
         if page.kind == "mail":
-            title = page.filename.removesuffix(".html")
-            mail.append({"title": title, "href": href, "count": _plural(count, "message")})
+            title_text = page.filename.removesuffix(".html")
+            count = _plural(len(page.message_ids), "message")
+            mail.append({"title": title_text, "href": href, "count": count})
             continue
-        last = renderer.messages[page.message_ids[-1]]["local"].year
-        span = str(page.year) if last == page.year else f"{page.year}–{last}"
-        entry = {"title": page.title, "href": href, "count": _plural(count, "item"), "span": span}
-        (people if page.kind == "person" else groups).append(entry)
-    sections: list[dict[str, Any]] = []
-    for name, entries in (("People", people), ("Groups", groups)):
-        if entries:
-            entries.sort(key=lambda e: str(e["title"]).casefold())
-            sections.append({"name": name, "entries": entries})
-    if mail:
-        sections.append({"name": "Mail", "entries": mail})
-    return site.env.get_template("index.html").render(sections=sections)
+        card = _card(renderer, page, href)
+        if page.kind == "group":
+            groups.append(card)
+            continue
+        card["named"] = _named(renderer, page)
+        category = chosen.get(page.title.casefold(), "")
+        card["category"] = (
+            (category if category in keys else "") if card["named"] else "unrecognized"
+        )
+        people.append(card)
+    people.sort(key=lambda p: str(p["title"]).casefold())
+    groups.sort(key=lambda g: str(g["title"]).casefold())
+    counts = {key: sum(1 for p in people if p["category"] == key) for key, _ in CATEGORIES}
+    counts["all"] = sum(1 for p in people if p["category"] != "unrecognized")
+    counts["unassigned"] = sum(1 for p in people if p["category"] == "")
+    return site.env.get_template("index.html").render(
+        title=title,
+        categories=[{"key": key, "label": label} for key, label in CATEGORIES],
+        counts={key: f"{value:,}" for key, value in counts.items()},
+        people=people,
+        groups=groups,
+        mail=mail,
+        stats=_stats(site),
+    )
 
 
 def _plural(count: int, word: str) -> str:
@@ -527,8 +685,12 @@ def render_pages(
     out_root: PathLike,
     attachment_roots: Sequence[PathLike] = (),
     pages_list: Optional[PathLike] = None,
+    categories: Optional[Mapping[str, str]] = None,
+    title: str = "Chattr archive",
 ) -> list[Path]:
     """Write every page and the index under `out_root`; returns the files written.
+
+    `categories` ({person's name: category}) sorts people on the index; `title` names it.
 
     Pages written by an earlier call and no longer wanted are deleted. The list of what was
     written is kept in `pages_list` (default: `.chattr-pages` in `out_root`).
@@ -547,7 +709,7 @@ def render_pages(
         written.append(path)
     index = site.out_root / "index.html"
     index.parent.mkdir(parents=True, exist_ok=True)
-    index.write_text(_index(site), encoding="utf-8")
+    index.write_text(_index(site, categories, title), encoding="utf-8")
     written.append(index)
     _forget_old_pages(
         site.out_root, Path(pages_list) if pages_list else site.out_root / PAGES_LIST, written
