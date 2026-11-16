@@ -39,6 +39,7 @@
 {% endfor %}</section>
 {% endfor %}<p class="end note" id="end">The latest: {{ last }}. <a href="#top">Back to the top</a></p>
 </main>
+<script>{% include "lightbox.js" %}</script>
 {% endblock %}
 {% block island %}<script type="application/json" id="chattr-data">{{ island | safe }}</script>
 {% endblock %}

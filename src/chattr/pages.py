@@ -10,8 +10,9 @@ A page can hold a whole life's messages with someone, so it is built to open at 
 is: the browser draws it as it reads it (the top is on screen before the end has arrived), it lays
 out only the dates that are on screen (`content-visibility`), and pictures, video and audio load
 only when they are scrolled to. A bar of years stays at the top while reading; each year begins with
-its calendar. There is no script: the page works the same in any browser, and inside Caixa, which
-shows pages with scripts turned off. Text is always
+its calendar. The page needs no script; one small script (`templates/lightbox.js`) adds a
+full-size view of the pictures, and without it each picture is still a link to its file. Caixa's
+viewer allows that one script, by its hash, and no other. Text is always
 escaped; links are only made from http(s) addresses; attachment links are only made to files that
 exist inside the given attachment folders. A JSON data island (`#chattr-data`) carries every stored
 column of the page's messages so the database can be rebuilt from the pages.

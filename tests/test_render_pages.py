@@ -64,7 +64,35 @@ def test_pages_are_self_contained(site) -> None:
     _, text = _page(site, "person", family.ANA.name)
     assert "<link " not in text and "<script src" not in text and "@import" not in text
     assert "<style>" in text and "prefers-color-scheme: dark" in text
-    assert text.lower().count("</script>") == 1  # the data island: the page runs no script
+    # the lightbox and the data island; nothing is loaded from elsewhere
+    assert text.lower().count("</script>") == 2 and "fetch(" not in text
+
+
+def _scripts(text: str) -> list[str]:
+    return re.findall(r"<script>(.*?)</script>", text, re.S)
+
+
+def test_the_lightbox_is_the_one_script_caixa_allows(site) -> None:
+    """Caixa's viewer lets a page run only scripts whose hash it lists (harness page-scripts.ts)."""
+    import base64
+    import hashlib
+
+    _, text = _page(site, "person", family.ANA.name)
+    (lightbox,) = _scripts(text)
+    assert ".attachment a > img" in lightbox and "lightbox" in lightbox
+    digest = base64.b64encode(hashlib.sha256(lightbox.encode("utf-8")).digest()).decode()
+    allowed = (
+        Path(__file__).resolve().parents[3] / "harness" / "src" / "host" / "page-scripts.ts"
+    ).read_text(encoding="utf-8")
+    assert (
+        f"'sha256-{digest}'" in allowed
+    ), f"lightbox.js changed: put sha256-{digest} in harness/src/host/page-scripts.ts"
+
+
+def test_every_picture_is_still_a_link_to_its_file(site) -> None:
+    _, text = _page(site, "person", family.ANA.name)
+    pictures = re.findall(r'<a href="([^"]+)"><img src="([^"]+)"', text)
+    assert pictures and all(link == source for link, source in pictures)
 
 
 def test_a_long_page_lays_out_only_what_is_on_screen(site) -> None:
@@ -223,7 +251,8 @@ def test_html_and_script_in_content_render_as_text(hostile) -> None:
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
     assert "<script>alert" not in text and "onerror=alert(1)>" not in text
     assert "&lt;i&gt;Mallory&lt;/i&gt;" in text and "<i>Mallory</i>" not in text
-    assert text.lower().count("</script>") == 1  # the island is the only script
+    # the lightbox and the island are the only scripts: nothing from the content runs
+    assert text.lower().count("</script>") == 2
     assert "<br>" in text and "second line" in text
     assert "<title>&lt;i&gt;Mallory&lt;/i&gt;</title>" in text
 

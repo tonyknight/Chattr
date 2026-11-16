@@ -24,6 +24,13 @@ a { color: var(--link); }
 .related, .mail-list { margin:.3rem 0; } .related summary, .mail-list summary { cursor:pointer; color:var(--muted); }
 .related ul, .mail-list ul { margin:.3rem 0 .5rem; padding-left:1.2rem; }
 .end { text-align:center; margin:2rem 0 3rem; }
+.attachment a > img { cursor:zoom-in; }
+.lightbox { display:none; position:fixed; inset:0; z-index:10; background:rgba(10,12,18,.92); align-items:center; justify-content:center; }
+.lightbox.open { display:flex; }
+.lightbox img { max-width:92vw; max-height:92vh; border-radius:.3rem; box-shadow:0 0 2rem rgba(0,0,0,.5); }
+.lightbox button { position:absolute; font:2.2rem/1 system-ui,sans-serif; color:#fff; background:rgba(255,255,255,.12); border:0; border-radius:.4rem; padding:.2rem .7rem; cursor:pointer; }
+.lightbox button:disabled { opacity:.25; cursor:default; }
+.lb-prev { left:1rem; top:50%; transform:translateY(-50%); } .lb-next { right:1rem; top:50%; transform:translateY(-50%); } .lb-close { right:1rem; top:1rem; font-size:1.8rem; }
 .month { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.5rem; }
 .month-name { font-weight:600; font-size:.85rem; margin-bottom:.25rem; }
 .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; font-size:.7rem; text-align:center; }

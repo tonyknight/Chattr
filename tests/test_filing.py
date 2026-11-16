@@ -617,7 +617,7 @@ def test_the_same_file_sent_many_times_is_stored_once_and_shown_every_time(
     assert archive.files() == [only] and archive.paths() == [only] * 3
     assert filed.created == [only] and filed.shared == 2
     page = _pages(archive)[ANA]
-    assert page.count("<img") == 3 and "file not in this archive" not in page
+    assert page.count("<img src=") == 3 and "file not in this archive" not in page
 
 
 def test_a_file_sent_to_two_people_is_stored_once_and_both_pages_show_it(archive: Archive) -> None:
