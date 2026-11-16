@@ -350,3 +350,14 @@ def test_the_address_book_is_not_read_unless_asked(chattr_root: Path, tmp_path: 
     settings = Settings.load(chattr_root)
     result = commands.convert_imessage(settings, db_path=_split(tmp_path), spam_mode="disabled")
     assert result.unresolved == 2  # her phone and her email, unnamed
+
+
+def test_a_mac_contact_with_no_number_or_address_still_names_by_name(tmp_path: Path) -> None:
+    book = _address_book(
+        tmp_path / "AddressBook",
+        "INSERT INTO ZABCDRECORD VALUES (1, 22, 'Joana', 'Silva', NULL, NULL, NULL);"
+        "INSERT INTO ZABCDRECORD VALUES (2, 22, 'Maria', 'Costa', NULL, 1, NULL);",
+    )
+    contacts = Contacts.from_macos(book)
+    assert contacts.lookup("Joana Silva") == "Joana Silva"
+    assert contacts.lookup("Maria Costa") is None  # the owner's own card is not a contact

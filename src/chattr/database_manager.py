@@ -20,7 +20,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
 from chattr.people import PeopleResolver
 from chattr.records import (
@@ -246,6 +246,22 @@ class DatabaseManager:
                     )
                     shared += 1
         return shared
+
+    def name_handles(self, service: str, name_of: Callable[[Optional[str]], Optional[str]]) -> int:
+        """Give a person to this service's unnamed handles that `name_of` knows (by identifier,
+        then display name); returns how many were named. A handle already named is left alone."""
+        named = 0
+        rows = self._db.execute(
+            "SELECT id, identifier, display_name FROM handles WHERE service = ? AND person IS NULL",
+            (service,),
+        ).fetchall()
+        for row in rows:
+            person = name_of(row["identifier"]) or name_of(row["display_name"])
+            if person:
+                self._db.execute("UPDATE handles SET person = ? WHERE id = ?", (person, row["id"]))
+                named += 1
+        self._db.commit()
+        return named
 
     def unresolved_handles(self, service: Optional[str] = None) -> list[UnresolvedHandle]:
         """Handles with no person yet, the busiest first."""

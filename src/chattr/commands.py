@@ -99,6 +99,15 @@ class NothingFound(CommandError):
     importing many exports at once can skip this one and carry on."""
 
 
+class LeftOut(Exception):
+    """The conversation was read but turned down by the caller's `keep` (nobody in it is on the
+    owner's friends list, say). Not an error: nothing of it was stored."""
+
+    def __init__(self, conversation: ConversationRecord) -> None:
+        super().__init__(f"Left out: {conversation.name or conversation.source_id}")
+        self.conversation = conversation
+
+
 @dataclass
 class ConvertResult:
     service: str
@@ -353,8 +362,13 @@ def convert(
     contacts: Optional[PathLike] = None,
     region: Optional[str] = None,
     resolve: bool = True,
+    keep: Optional[Callable[[ConversationRecord], bool]] = None,
 ) -> ConvertResult:
     """Convert one export along the chosen route.
+
+    `keep`, for a source that describes its thread (Messenger, Instagram), decides from the
+    conversation whether to import it at all; a thread it turns down raises `LeftOut` and nothing
+    of it is stored.
 
     With `resolve=False` the people are not linked afterwards: call `people()` once when every
     export of a batch has been converted.
@@ -401,6 +415,8 @@ def convert(
         raise NothingFound(f"No messages found in {export}")
     _apply_aliases(messages, aliases)
     conversation = _conversation(name, export, parser, messages)
+    if keep is not None and not keep(conversation):
+        raise LeftOut(conversation)
     if attachments_dir:
         _archive_media(messages, attachments_dir, name, conversation)
     roots = attachment_roots(settings, [attachments_dir] if attachments_dir else [])

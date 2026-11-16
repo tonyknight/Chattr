@@ -101,17 +101,19 @@ def test_vcard_4_and_utf8(tmp_path: Path) -> None:
     assert contacts.lookup("+1 555 0104") == "João Müller"
 
 
-def test_cards_without_a_name_or_any_handle_are_skipped(tmp_path: Path) -> None:
+def test_cards_without_a_name_are_skipped_and_a_name_alone_still_counts(tmp_path: Path) -> None:
     contacts = Contacts.from_vcf(
         _vcf(
             tmp_path,
             "BEGIN:VCARD\nVERSION:3.0\nTEL:+15550105\nEND:VCARD\n"
-            "BEGIN:VCARD\nVERSION:3.0\nFN:No Handles\nEND:VCARD\n"
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Only A Name\nEND:VCARD\n"
             "BEGIN:VCARD\nVERSION:3.0\nFN:Has One\nTEL:+15550106\nEND:VCARD\n",
         )
     )
-    assert len(contacts) == 1
+    assert len(contacts) == 2
     assert contacts.lookup("+15550105") is None and contacts.lookup("+15550106") == "Has One"
+    # a contact with no number or address still names a handle that is that name (Messenger)
+    assert contacts.lookup("only a name") == "Only A Name"
 
 
 def test_a_broken_file_is_an_error_not_a_crash(tmp_path: Path) -> None:

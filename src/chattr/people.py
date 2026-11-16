@@ -161,6 +161,8 @@ class Contacts(_Index):
                     f"SELECT ZOWNER, {address} FROM ZABCDEMAILADDRESS WHERE ZOWNER IS NOT NULL"
                 ),
             ]
+        for name in names.values():  # a name seen as a handle, with or without a number
+            self.add(name, name)
         for owner, value in found:
             if not value:
                 continue
@@ -189,7 +191,7 @@ class Contacts(_Index):
                 for key in ("tel", "email")
                 for entry in getattr(card, f"{key}_list", [])
             ]
-            if not name or not handles:
+            if not name:
                 continue
             contacts.add(name, name)  # a name seen as a handle (WhatsApp, Messenger)
             for handle in handles:
