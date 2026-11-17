@@ -472,7 +472,8 @@ def publish(
 
     Attachments found in `attachments_dirs` (and Chattr's usual folders) are moved under `out`,
     named for their date and sender (see `chattr.filing`); audio a browser cannot play gets a copy
-    it can. Returns None when the archive is empty.
+    it can. Returns None when the archive is empty, unless it had pages before (everyone in it
+    was removed): then the old pages go and an empty index is drawn.
     """
     if not central_database(settings).exists():
         return None
@@ -480,7 +481,8 @@ def publish(
     roots = attachment_roots(settings, attachments_dirs)
     with DatabaseManager(central_database(settings)) as db:
         renderer = Renderer(db)
-        if not renderer.pages:
+        emptied = pages_list is not None and Path(pages_list).is_file()  # it had pages before
+        if not renderer.pages and not emptied:
             return None
         filed = file_attachments(
             db, renderer, folder, roots, make_playable, progress, convert_images

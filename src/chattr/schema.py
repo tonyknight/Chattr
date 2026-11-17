@@ -190,12 +190,19 @@ CREATE TABLE handle_groups (
 CREATE INDEX handle_groups_by_key ON handle_groups (group_key);
 """
 
+# Version 6: a handle its owner removed from the archive. It is never named or listed to be named;
+# what it wrote in a group stays in the group.
+MIGRATION_6 = """
+ALTER TABLE handles ADD COLUMN removed INTEGER NOT NULL DEFAULT 0;
+"""
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, MIGRATION_1),
     (2, MIGRATION_2),
     (3, MIGRATION_3),
     (4, MIGRATION_4),
     (5, MIGRATION_5),
+    (6, MIGRATION_6),
 ]
 CURRENT_VERSION = MIGRATIONS[-1][0]
 

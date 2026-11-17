@@ -94,6 +94,16 @@ class GroupTidy:
     unchecked: set[str] = field(default_factory=set)  # services whose owner is not known yet
 
 
+@dataclass
+class Removed:
+    """What `DatabaseManager.remove_people` took out."""
+
+    conversations: int = 0
+    messages: int = 0
+    handles: int = 0
+    files: list[str] = field(default_factory=list)  # storage paths no message shows any more
+
+
 def _looks_like_phone(identifier: Optional[str]) -> bool:
     return normalize_identifier(identifier, "US").startswith("+")
 
@@ -115,7 +125,8 @@ def unresolved_rows(conn: sqlite3.Connection, schema: str = "") -> list[dict[str
         f"EXISTS (SELECT 1 FROM {p}messages d JOIN {p}conversations c ON c.id = d.conversation_id "
         "WHERE d.sender_handle_id = h.id AND c.type != 'group')) AS direct "
         f"FROM {p}handles h LEFT JOIN {p}messages m ON m.sender_handle_id = h.id "
-        "WHERE h.person IS NULL GROUP BY h.id ORDER BY messages DESC, h.service, h.identifier"
+        "WHERE h.person IS NULL AND h.removed = 0 "
+        "GROUP BY h.id ORDER BY messages DESC, h.service, h.identifier"
     )
     names = [column[0] for column in cursor.description]
     rows = [dict(zip(names, row)) for row in cursor.fetchall()]
@@ -226,13 +237,13 @@ class DatabaseManager:
         """
         db = self._db
         result = PeopleResult()
-        query = "SELECT id, service, identifier, display_name, person FROM handles"
+        query = "SELECT id, service, identifier, display_name, person, removed FROM handles"
         rows = db.execute(
             query + (" WHERE service = ?" if service else ""), (service,) if service else ()
         ).fetchall()
         for row in rows:
             person = resolver.person_for(row["identifier"], row["display_name"])
-            if person and person != row["person"]:
+            if person and person != row["person"] and not row["removed"]:
                 db.execute("UPDATE handles SET person = ? WHERE id = ?", (person, row["id"]))
                 result.newly_resolved += 1
             if resolver.owner_name and resolver.is_owner(row["identifier"], row["display_name"]):
@@ -315,7 +326,8 @@ class DatabaseManager:
         then display name); returns how many were named. A handle already named is left alone."""
         named = 0
         rows = self._db.execute(
-            "SELECT id, identifier, display_name FROM handles WHERE service = ? AND person IS NULL",
+            "SELECT id, identifier, display_name FROM handles "
+            "WHERE service = ? AND person IS NULL AND removed = 0",
             (service,),
         ).fetchall()
         for row in rows:
@@ -336,6 +348,84 @@ class DatabaseManager:
             for r in unresolved_rows(self._db)
             if service is None or r["service"] == service
         ]  # fmt: skip
+
+    def remove_people(self, match: Callable[[str, str, Optional[str]], bool]) -> "Removed":
+        """Take people out of the archive. `match(service, identifier, person)` says which
+        handles; the owner's own are never taken, and a handle removed before stays removed
+        (what was imported for it since goes too).
+
+        Every conversation that is not a group and not mail, and is with nobody but them, is
+        deleted, messages and all. The handles are marked removed: never named, never listed to
+        be named. What they wrote in a group stays in the group. Returns what went, with the
+        files (`storage_path`) that no remaining message shows. Safe to repeat.
+        """
+        db = self._db
+        owners = {
+            r[0] for r in db.execute("SELECT handle_id FROM participants WHERE role = 'owner'")
+        } | {
+            r[0]
+            for r in db.execute(
+                "SELECT DISTINCT sender_handle_id FROM messages "
+                "WHERE is_from_owner = 1 AND sender_handle_id IS NOT NULL"
+            )
+        }
+        targets = {
+            r["id"]
+            for r in db.execute(
+                "SELECT id, service, identifier, person, removed FROM handles"
+            ).fetchall()
+            if r["id"] not in owners
+            and (r["removed"] or match(r["service"], r["identifier"], r["person"]))
+        }
+        result = Removed()
+        if not targets:
+            return result
+        with_whom: dict[str, set[int]] = {}
+        for conversation_id, handle_id in db.execute(
+            "SELECT p.conversation_id, p.handle_id FROM participants p "
+            "JOIN conversations c ON c.id = p.conversation_id "
+            "WHERE c.type != 'group' AND c.service != 'Mail' AND p.role != 'owner' "
+            "UNION SELECT m.conversation_id, m.sender_handle_id FROM messages m "
+            "JOIN conversations c ON c.id = m.conversation_id "
+            "WHERE c.type != 'group' AND c.service != 'Mail' AND m.is_from_owner = 0 "
+            "AND m.sender_handle_id IS NOT NULL"
+        ):
+            with_whom.setdefault(conversation_id, set()).add(handle_id)
+        paths: set[str] = set()
+        for conversation_id, others in with_whom.items():
+            if not (others - owners) or not (others - owners) <= targets:
+                continue
+            ids = "SELECT id FROM messages WHERE conversation_id = ?"
+            paths |= {
+                r[0]
+                for r in db.execute(
+                    f"SELECT storage_path FROM attachments WHERE message_id IN ({ids}) "
+                    "AND storage_path IS NOT NULL",
+                    (conversation_id,),
+                )
+            }
+            db.execute(f"DELETE FROM reactions WHERE message_id IN ({ids})", (conversation_id,))
+            db.execute(f"DELETE FROM attachments WHERE message_id IN ({ids})", (conversation_id,))
+            result.messages += db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
+            ).rowcount
+            db.execute("DELETE FROM participants WHERE conversation_id = ?", (conversation_id,))
+            db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            result.conversations += 1
+        for path in sorted(paths):
+            still = db.execute(
+                "SELECT 1 FROM attachments WHERE storage_path = ? LIMIT 1", (path,)
+            ).fetchone()
+            if not still:
+                result.files.append(path)
+        marks = ",".join("?" for _ in targets)
+        result.handles = db.execute(
+            f"UPDATE handles SET person = NULL, removed = 1 WHERE id IN ({marks}) "
+            "AND (removed = 0 OR person IS NOT NULL)",
+            sorted(targets),
+        ).rowcount
+        db.commit()
+        return result
 
     def tidy_groups(self) -> GroupTidy:
         """Apply the rules for group conversations, from any source:
