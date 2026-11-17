@@ -4,9 +4,9 @@
    and only browses. */
 (function () {
   document.documentElement.className += " js";
-  // opened in Caixa (its own window serves the box under /box/; the harness plugin used /api/caixa/box)
+  // opened in Caixa, which serves the box under /box/
   var CAIXA = /^https?:$/.test(location.protocol) &&
-    (location.pathname === "/box/" || location.pathname === "/box/index.html" || location.pathname === "/api/caixa/box");
+    (location.pathname === "/box/" || location.pathname === "/box/index.html");
   var LABELS = { all: "All people", family: "Family", friends: "Friends", business: "Business",
     acquaintance: "Acquaintances", unrecognized: "Unrecognized", unassigned: "Unassigned",
     groups: "Groups", mail: "Mail" };

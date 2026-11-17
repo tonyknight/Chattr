@@ -72,21 +72,20 @@ def _scripts(text: str) -> list[str]:
     return re.findall(r"<script>(.*?)</script>", text, re.S)
 
 
-def test_the_lightbox_is_the_one_script_caixa_allows(site) -> None:
-    """Caixa's viewer lets a page run only scripts whose hash it lists (harness page-scripts.ts)."""
-    import base64
-    import hashlib
+def _template(name: str) -> str:
+    import chattr
 
+    text = (Path(chattr.__file__).resolve().parent / "templates" / name).read_text(encoding="utf-8")
+    return text[:-1] if text.endswith("\n") else text
+
+
+def test_the_lightbox_is_the_one_script_and_exactly_its_template(site) -> None:
+    """Caixa lets a page run only scripts whose hash it knows, which it works out from the template
+    (without its last newline, as Jinja includes it): the page must carry it unchanged."""
     _, text = _page(site, "person", family.ANA.name)
     (lightbox,) = _scripts(text)
     assert ".attachment a > img" in lightbox and "lightbox" in lightbox
-    digest = base64.b64encode(hashlib.sha256(lightbox.encode("utf-8")).digest()).decode()
-    allowed = (
-        Path(__file__).resolve().parents[3] / "harness" / "src" / "host" / "page-scripts.ts"
-    ).read_text(encoding="utf-8")
-    assert (
-        f"'sha256-{digest}'" in allowed
-    ), f"lightbox.js changed: put sha256-{digest} in harness/src/host/page-scripts.ts"
+    assert lightbox == _template("lightbox.js")
 
 
 def test_every_picture_is_still_a_link_to_its_file(site) -> None:
@@ -486,17 +485,8 @@ def test_the_dashboard_counts_each_source_and_its_files(site) -> None:
     assert "built-in method" not in text
 
 
-def test_the_index_script_is_one_caixa_allows(site) -> None:
-    import base64
-    import hashlib
-
+def test_the_index_script_is_exactly_its_template(site) -> None:
     _, out, _ = site
     text = (out / "index.html").read_text(encoding="utf-8")
     (script,) = re.findall(r"<script>(.*?)</script>", text, re.S)
-    digest = base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode()
-    allowed = (
-        Path(__file__).resolve().parents[3] / "harness" / "src" / "host" / "page-scripts.ts"
-    ).read_text(encoding="utf-8")
-    assert (
-        f"'sha256-{digest}'" in allowed
-    ), f"index.js changed: put sha256-{digest} in harness/src/host/page-scripts.ts"
+    assert script == _template("index.js")
