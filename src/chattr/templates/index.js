@@ -13,10 +13,42 @@
   var ASSIGNED = { family: 1, friends: 1, business: 1, acquaintance: 1 };
   var CHOOSING = { unassigned: 1, unrecognized: 1 };  // the views where people are selected
   var NEEDS_CAIXA = "Changing the box works when it is opened in Caixa.";
+  // The script brings the styles for what it adds, so a page drawn by an earlier version (Caixa
+  // serves every page with the current script) looks right too.
+  var STYLE = [
+    "[hidden]{display:none !important}",
+    ".cell{position:relative;display:flex;flex-direction:column}",
+    ".cell .tile{flex:1}",
+    ".cell .tool{position:absolute;top:.3rem;right:.4rem;z-index:3;width:1.6rem;height:1.6rem;padding:0;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;font-size:.9rem;line-height:1;cursor:pointer;display:grid;place-items:center;box-shadow:0 1px 3px var(--shadow);opacity:0;pointer-events:none;transition:opacity .12s}",
+    ".cell:hover .tool,.cell:focus-within .tool{opacity:1;pointer-events:auto}",
+    ".cell .tool:hover,.cell .tool:focus-visible{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}",
+    ".cell .tool.unassign:hover,.cell .tool.unassign:focus-visible{background:#bf616a;border-color:#bf616a;color:#eceff4}",
+    ".tile.selected::after{right:auto !important;left:.6rem}",
+    ".cell .naming{position:relative;display:flex;gap:.3rem;align-items:center;margin:.35rem .35rem 0;visibility:hidden}",
+    ".cell:hover .naming,.cell:focus-within .naming,.cell .naming.filled{visibility:visible}",
+    ".cell .naming input{flex:1;min-width:0;font:inherit;font-size:.8rem;padding:.3rem .5rem;border:1px solid var(--line);border-radius:.45rem;background:var(--card);color:var(--fg)}",
+    ".cell .naming input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent)}",
+    ".cell .naming .apply{font:inherit;font-size:.78rem;padding:.3rem .6rem;border-radius:.45rem;border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);cursor:pointer}",
+    ".cell .naming .suggest{position:absolute;left:0;right:0;top:calc(100% + .2rem);z-index:6;margin:0;padding:.25rem;list-style:none;background:var(--card);border:1px solid var(--line);border-radius:.5rem;box-shadow:0 6px 18px var(--shadow);text-align:left;max-height:14rem;overflow-y:auto}",
+    ".cell .naming .suggest li{padding:.3rem .5rem;border-radius:.35rem;font-size:.8rem;cursor:pointer;overflow-wrap:anywhere}",
+    ".cell .naming .suggest li[aria-selected=true],.cell .naming .suggest li:hover{background:var(--accent);color:var(--on-accent)}",
+    ".cell .naming .suggest li small{display:block;opacity:.75;font-size:.7rem}",
+    ".app[data-view=unrecognized] .tile .tip{top:auto;bottom:calc(100% - .3rem)}",
+    ".cell:focus-within .tile .tip{display:none !important}",
+    "dialog.confirm{border:1px solid var(--line);border-radius:.8rem;background:var(--card);color:var(--fg);padding:1.2rem 1.4rem;max-width:26rem;box-shadow:0 10px 30px var(--shadow)}",
+    "dialog.confirm::backdrop{background:rgba(46,52,64,.45)}",
+    "dialog.confirm h2{font-size:1.05rem;margin:0 0 .5rem}dialog.confirm p{font-size:.9rem;color:var(--muted);margin:0 0 1rem}",
+    "dialog.confirm .buttons{display:flex;justify-content:flex-end;gap:.5rem}",
+    "dialog.confirm button{font:inherit;font-size:.88rem;padding:.35rem .9rem;border-radius:.5rem;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}",
+    "dialog.confirm button.danger{background:#bf616a;border-color:#bf616a;color:#eceff4}"
+  ].join("\n");
   function init() {
     var app = document.querySelector(".app");
     if (!app || app.getAttribute("data-ready")) return;
     app.setAttribute("data-ready", "1");
+    var style = document.createElement("style");
+    style.textContent = STYLE;
+    document.head.appendChild(style);
     var tiles = Array.prototype.slice.call(document.querySelectorAll("#people .tile"));
     var title = document.getElementById("view-title");
     var footer = { count: document.getElementById("count"), picked: document.getElementById("picked"),
@@ -51,6 +83,7 @@
       });
     }
     function update() {
+      tiles.forEach(function (t) { cell(t).hidden = !belongs(t, view); });
       if (view === "groups") footer.count.textContent = plural(document.querySelectorAll("#groups .tile").length, "group");
       else if (view === "mail") footer.count.textContent = plural(document.querySelectorAll("#mail li").length, "conversation");
       else footer.count.textContent = people(shown().length);
@@ -153,15 +186,62 @@
     }
 
     // --- Naming someone nobody named -------------------------------------------------------
+    // The people already in the box, offered as a name is typed (so a number can join someone
+    // known); any other name makes a new person.
+    var known = [];
+    function learnKnown(list) {
+      var seen = {};
+      known = list.filter(function (p) {
+        var key = p.name.toLowerCase();
+        if (!p.name || seen[key]) return false;
+        seen[key] = 1;
+        return true;
+      }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    }
+    learnKnown(tiles.filter(function (t) { return t.getAttribute("data-name") !== null; })
+      .map(function (t) { return { name: t.getAttribute("data-name"), detail: "" }; }));
+    if (CAIXA) {
+      rpc("people.list", {}).then(function (result) {
+        learnKnown(result.people.filter(function (p) { return !p.is_owner; }).map(function (p) {
+          return { name: p.name, detail: p.items ? plural(p.items, "item") : "" };
+        }));
+      }, function () { /* the names on the page will do */ });
+    }
+    function existing(typed) {
+      var key = typed.toLowerCase();
+      for (var i = 0; i < known.length; i++) if (known[i].name.toLowerCase() === key) return known[i].name;
+      return null;
+    }
+    function matches(typed) {
+      var key = typed.trim().toLowerCase();
+      if (!key) return [];
+      var first = [], then = [];
+      known.forEach(function (p) {
+        var name = p.name.toLowerCase();
+        if (name.indexOf(key) === 0) first.push(p);
+        else if (name.split(/\s+/).some(function (word) { return word.indexOf(key) === 0; }) || name.indexOf(key) > 0) then.push(p);
+      });
+      return first.concat(then).slice(0, 8);
+    }
     function name(tile, typed) {
       var handles = JSON.parse(tile.getAttribute("data-handles") || "[]");
       if (!handles.length) return;
+      var joins = existing(typed);
+      if (joins) typed = joins;
       say("Saving…");
       var chain = Promise.resolve();
       handles.forEach(function (h) {
         chain = chain.then(function () { return rpc("people.link", { service: h.service, identifier: h.identifier, person: typed }); });
       });
       chain.then(function () {
+        if (joins) {  // someone already in the box: the tile joins theirs when the pages are redrawn
+          var gone = cell(tile);
+          gone.parentNode.removeChild(gone);
+          tiles = tiles.filter(function (t) { return t !== tile; });
+          say("Linked to " + joins + ". Their page is being redrawn with everything from this number.");
+          update();
+          return;
+        }
         unpick(tile);
         tile.removeAttribute("aria-pressed");
         tile.removeAttribute("data-handles");
@@ -169,8 +249,9 @@
         tile.setAttribute("data-category", "");
         tile.querySelector(".name").textContent = typed;
         labels(cell(tile), typed);
-        var form = cell(tile).querySelector("form.naming");
+        var form = cell(tile).querySelector(".naming");
         if (form) form.parentNode.removeChild(form);
+        known.push({ name: typed, detail: "" });
         say(typed + " is kept as a person, in Unassigned.");
         update();
       }, function (error) { say("Not saved: " + error.message); });
@@ -198,9 +279,10 @@
       box.appendChild(out);
       labels(box, tile.querySelector(".name").textContent);
       if (tile.getAttribute("data-name") === null) {
-        var form = document.createElement("form");
+        var form = document.createElement("div");
         form.className = "naming";
-        form.innerHTML = '<input type="text" name="name" placeholder="Name" aria-label="Name for this person" autocomplete="off"><button type="button" class="apply">Apply</button>';
+        form.innerHTML = '<input type="text" name="name" placeholder="Name" aria-label="Name for this person" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">' +
+          '<button type="button" class="apply" hidden>Apply</button><ul class="suggest" role="listbox" aria-label="People in this box" hidden></ul>';
         box.appendChild(form);
       }
     });
@@ -214,29 +296,86 @@
         else categorize([tile], null, function () { return tile.querySelector(".name").textContent + " moved back to Unassigned."; });
         return;
       }
-      var apply = event.target.closest("form.naming .apply");
-      if (apply) { applyName(apply.form); return; }
-      if (event.target.closest("form.naming")) return;
+      var apply = event.target.closest(".naming .apply");
+      if (apply) { applyName(apply.parentNode); return; }
+      var option = event.target.closest(".naming .suggest li");
+      if (option) { choose(option.parentNode.parentNode, option.getAttribute("data-name")); return; }
+      if (event.target.closest(".naming")) return;
       var picked = event.target.closest(".tile");
       if (!picked || !CHOOSING[view] || !choosable(picked, view)) return;
       event.preventDefault();
       pick(picked, event.shiftKey);
     });
-    // (no form submission: a sandboxed frame, like Caixa's viewer, never sends a submit event)
+    // --- The name field: Apply once something is typed, and the people it could be ---------
     function applyName(form) {
-      var typed = form.elements.name.value.trim();
-      if (!typed) { form.elements.name.focus(); return; }
+      var field = form.querySelector("input"), typed = field.value.trim();
+      if (!typed) { field.focus(); return; }
+      suggest(form, false);
       name(cell(form).querySelector(".tile"), typed);
     }
+    function choose(form, chosen) {
+      var field = form.querySelector("input");
+      field.value = chosen;
+      typing(form);
+      suggest(form, false);
+      field.focus();
+    }
+    function suggest(form, open) {
+      var list = form.querySelector(".suggest"), field = form.querySelector("input");
+      var found = open ? matches(field.value) : [];
+      list.innerHTML = "";
+      found.forEach(function (p, i) {
+        var item = document.createElement("li");
+        item.setAttribute("role", "option");
+        item.setAttribute("data-name", p.name);
+        item.setAttribute("aria-selected", i === 0 ? "true" : "false");
+        item.textContent = p.name;
+        if (p.detail) { var small = document.createElement("small"); small.textContent = p.detail; item.appendChild(small); }
+        list.appendChild(item);
+      });
+      list.hidden = !found.length;
+      field.setAttribute("aria-expanded", found.length ? "true" : "false");
+    }
+    function typing(form) {
+      var filled = form.querySelector("input").value.trim() !== "";
+      form.classList.toggle("filled", filled);
+      form.querySelector(".apply").hidden = !filled;
+    }
+    gallery.addEventListener("input", function (event) {
+      var form = event.target.closest && event.target.closest(".naming");
+      if (!form) return;
+      typing(form);
+      suggest(form, true);
+    });
     gallery.addEventListener("keydown", function (event) {
-      var field = event.target.closest && event.target.closest("form.naming input");
-      if (field && event.key === "Enter") { event.preventDefault(); applyName(field.form); }
+      var field = event.target.closest && event.target.closest(".naming input");
+      if (!field) return;
+      var form = field.parentNode, list = form.querySelector(".suggest");
+      var items = Array.prototype.slice.call(list.querySelectorAll("li"));
+      var at = items.findIndex(function (li) { return li.getAttribute("aria-selected") === "true"; });
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && items.length) {
+        event.preventDefault();
+        var next = event.key === "ArrowDown" ? Math.min(items.length - 1, at + 1) : Math.max(0, at - 1);
+        items.forEach(function (li, i) { li.setAttribute("aria-selected", i === next ? "true" : "false"); });
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (!list.hidden && at >= 0) choose(form, items[at].getAttribute("data-name"));
+        else applyName(form);
+      } else if (event.key === "Escape") {
+        suggest(form, false);
+      }
+    });
+    gallery.addEventListener("focusout", function (event) {
+      var form = event.target.closest && event.target.closest(".naming");
+      if (form && !form.contains(event.relatedTarget)) setTimeout(function () { if (!form.contains(document.activeElement)) suggest(form, false); }, 150);
     });
     // the tools show for the views they belong to
     function tools() {
       Array.prototype.forEach.call(document.querySelectorAll("#people .cell"), function (c) {
-        var t = c.querySelector(".tile"), out = c.querySelector(".tool.unassign"), win = c.querySelector(".tool.window"), form = c.querySelector("form.naming");
-        if (out) out.hidden = !(ASSIGNED[view] && ASSIGNED[t.getAttribute("data-category")]);
+        var t = c.querySelector(".tile"), out = c.querySelector(".tool.unassign"), win = c.querySelector(".tool.window"), form = c.querySelector(".naming");
+        // one button in the corner: the close box in a category, the open-a-page button where a
+        // click selects (Unassigned, Unrecognized)
+        if (out) out.hidden = !(CAIXA && ASSIGNED[view] && ASSIGNED[t.getAttribute("data-category")]);
         if (win) win.hidden = !CHOOSING[view];
         if (form) form.hidden = view !== "unrecognized";
       });

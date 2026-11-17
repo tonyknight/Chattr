@@ -51,22 +51,6 @@ table.sources tr:last-child td { border-bottom:0; } table.sources tfoot td { fon
 .tile.selected { border-color:var(--accent); background:var(--card); }
 .tile.selected .face { box-shadow:0 0 0 3px var(--accent); }
 .tile.selected::after { content:"\2713"; position:absolute; top:.35rem; right:.6rem; width:1.4rem; height:1.4rem; border-radius:50%; background:var(--accent); color:var(--on-accent); font-size:.85rem; display:grid; place-items:center; }
-.cell { position:relative; display:flex; flex-direction:column; }
-.cell .tile { flex:1; }
-.cell .tool { position:absolute; top:.25rem; width:1.55rem; height:1.55rem; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--fg); font:inherit; font-size:.85rem; line-height:1; cursor:pointer; display:none; place-items:center; z-index:3; box-shadow:0 1px 3px var(--shadow); }
-.cell .tool.unassign { right:.35rem; } .cell .tool.window { left:.35rem; }
-.cell:hover .tool, .cell:focus-within .tool { display:grid; }
-.cell .tool:hover { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
-.cell .tool.unassign:hover { background:#bf616a; border-color:#bf616a; }
-.cell form.naming { display:flex; gap:.25rem; margin:.3rem .3rem 0; }
-.cell form.naming input { flex:1; min-width:0; font:inherit; font-size:.78rem; padding:.2rem .4rem; border:1px solid var(--line); border-radius:.4rem; background:var(--card); color:var(--fg); }
-.cell form.naming button { font:inherit; font-size:.75rem; padding:.2rem .5rem; border-radius:.4rem; border:1px solid var(--accent); background:var(--accent); color:var(--on-accent); cursor:pointer; }
-dialog.confirm { border:1px solid var(--line); border-radius:.8rem; background:var(--card); color:var(--fg); padding:1.2rem 1.4rem; max-width:26rem; box-shadow:0 10px 30px var(--shadow); }
-dialog.confirm::backdrop { background:rgba(46,52,64,.45); }
-dialog.confirm h2 { font-size:1.05rem; margin:0 0 .5rem; } dialog.confirm p { font-size:.9rem; color:var(--muted); margin:0 0 1rem; }
-dialog.confirm .buttons { display:flex; justify-content:flex-end; gap:.5rem; }
-dialog.confirm button { font:inherit; font-size:.88rem; padding:.35rem .9rem; border-radius:.5rem; border:1px solid var(--line); background:var(--panel); color:var(--fg); cursor:pointer; }
-dialog.confirm button.danger { background:#bf616a; border-color:#bf616a; color:#eceff4; }
 section.list h2 { font-size:1.05rem; margin:1.6rem 0 .6rem; }
 #mail ul { list-style:none; padding:0; margin:0; background:var(--card); border:1px solid var(--line); border-radius:.7rem; }
 #mail li { display:flex; gap:1rem; padding:.55rem .9rem; border-bottom:1px solid var(--line); font-size:.9rem; } #mail li:last-child { border-bottom:0; }
@@ -86,10 +70,7 @@ section.list h2 { font-size:1.05rem; margin:1.6rem 0 .6rem; }
 {% for c in categories %}.js .app[data-view="{{ c.key }}"] #people .tile:not([data-category="{{ c.key }}"]) { display:none; }
 {% endfor %}.js .app[data-view="unassigned"] .hint.sorting { display:block; } .js .app[data-view="unassigned"] .hint.browse { display:none; }
 .js .app[data-view="unassigned"] #people .tile[draggable="true"], .js .app[data-view="unrecognized"] #people .tile[aria-pressed] { cursor:pointer; }
-.js .app[data-view="all"] #people .cell:has(.tile[data-category="unrecognized"]) { display:none; }
-.js .app[data-view="unassigned"] #people .cell:has(.tile:not([data-category=""])) { display:none; }
-{% for c in categories %}.js .app[data-view="{{ c.key }}"] #people .cell:has(.tile:not([data-category="{{ c.key }}"])) { display:none; }
-{% endfor %}.js .app[data-view="unrecognized"] .hint.naming { display:block; } .js .app[data-view="unrecognized"] .hint.browse { display:none; }
+.js .app[data-view="unrecognized"] .hint.naming { display:block; } .js .app[data-view="unrecognized"] .hint.browse { display:none; }
 .empty { display:none; color:var(--muted); padding:2rem 0; }
 /* a narrow window: the categories become a bar that stays at the top, so they are always there to
    drop people on */
@@ -117,7 +98,7 @@ section.list h2 { font-size:1.05rem; margin:1.6rem 0 .6rem; }
 <h1 id="view-title">All people</h1>
 <p class="hint browse">Click someone to open everything from them. Hover to see where it came from.</p>
 <p class="hint sorting">Click people to select them (Shift-click for a range), then drag them onto a category, or use the buttons below. Delete (or Backspace) removes the people selected from the box.</p>
-<p class="hint naming">Type a name under someone and choose Apply to keep them as a person. Click to select (Shift-click for a range); Delete (or Backspace) removes the people selected from the box.</p>
+<p class="hint naming">Hover over someone and type a name under them: pick a person already in the box to join them, or type a new name, then Apply. Click to select (Shift-click for a range); Delete (or Backspace) removes the people selected from the box.</p>
 <section class="dashboard" aria-label="About this box">
 <div class="cards">
 <div class="card-stat"><b>{{ stats['items'] }}</b><span>items</span></div>
