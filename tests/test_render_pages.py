@@ -446,6 +446,13 @@ def test_people_are_tiles_sorted_into_categories(full_archive, tmp_path: Path) -
     assert tiles[family.UNKNOWN_HANDLE] == "unrecognized"  # a number nobody named
     assert f'data-name="{family.ANA.name}"' in text
     assert f'data-name="{family.UNKNOWN_HANDLE}"' not in text  # only named people can be sorted
+    # someone nobody named carries their numbers, to be named or removed from the index
+    handles = re.findall(r'data-handles="([^"]*)"', text)
+    assert handles and any(
+        {"identifier": family.UNKNOWN_HANDLE}.items() <= h.items()
+        for found in handles
+        for h in json.loads(html.unescape(found))
+    )
     for view in ("all", "family", "friends", "business", "acquaintance", "unrecognized",
                  "unassigned", "groups", "mail"):  # fmt: skip
         assert f'data-view="{view}"' in text

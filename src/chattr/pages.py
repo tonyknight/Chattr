@@ -452,6 +452,27 @@ def _named(renderer: Renderer, spec: PageSpec) -> bool:
     return any(renderer.handles[h]["person"] for h in handles if h not in renderer.owner_handles)
 
 
+def _handles(renderer: Renderer, spec: PageSpec) -> str:
+    """The numbers, addresses and accounts on a person's page (not the owner's), as JSON for the
+    index's tile: naming or removing someone nobody named works on these."""
+    handles: set[int] = set()
+    for conversation_id in spec.conversation_ids:
+        handles |= set(renderer.participants.get(conversation_id, []))
+    handles |= {
+        renderer.messages[m]["sender_handle_id"]
+        for m in spec.message_ids
+        if renderer.messages[m]["sender_handle_id"]
+    }
+    found = sorted(
+        {
+            (renderer.handles[h]["service"], renderer.handles[h]["identifier"])
+            for h in handles
+            if h not in renderer.owner_handles and h in renderer.handles
+        }
+    )
+    return json.dumps([{"service": s, "identifier": i} for s, i in found], ensure_ascii=False)
+
+
 def _card(renderer: Renderer, page: PageSpec, href: str) -> dict[str, Any]:
     """What a tile shows about a person or group: counts, years, and each source's share."""
     by_source: dict[str, int] = {}
@@ -567,6 +588,7 @@ def _index(
             groups.append(card)
             continue
         card["named"] = _named(renderer, page)
+        card["handles"] = "" if card["named"] else _handles(renderer, page)
         category = chosen.get(page.title.casefold(), "")
         card["category"] = (
             (category if category in keys else "") if card["named"] else "unrecognized"
