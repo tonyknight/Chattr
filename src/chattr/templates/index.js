@@ -55,6 +55,36 @@
       actions: document.getElementById("actions"), said: document.getElementById("said") };
     var view = "all", anchor = null;
     function cell(tile) { return tile.parentNode; }
+    // How many items a tile stands for: its data-items, or (on a page drawn before it had one) the
+    // number its counts line begins with, as in "1,234 items · 2019–2024".
+    function items(tile) {
+      var given = tile.getAttribute("data-items");
+      if (given !== null) return Number(given) || 0;
+      var meta = tile.querySelector(".meta");
+      var found = meta && /^\s*([\d.,\s\u00a0\u202f]+?)\s*items?\b/.exec(meta.textContent);
+      return found ? Number(found[1].replace(/\D/g, "")) || 0 : 0;
+    }
+    tiles.forEach(function (t, i) { t.setAttribute("data-order", String(i)); });
+    // a tile renamed in place takes the place its new name has among the others
+    function renumber(renamed) {
+      var others = tiles.filter(function (t) { return t !== renamed; }).sort(function (a, b) {
+        return Number(a.getAttribute("data-order")) - Number(b.getAttribute("data-order"));
+      });
+      var key = renamed.querySelector(".name").textContent.toLowerCase(), at = others.length;
+      for (var i = 0; i < others.length; i++) {
+        if (others[i].querySelector(".name").textContent.toLowerCase().localeCompare(key) > 0) { at = i; break; }
+      }
+      others.splice(at, 0, renamed);
+      others.forEach(function (t, n) { t.setAttribute("data-order", String(n)); });
+    }
+    // Unrecognized is worked through busiest first: the most items on top. Everywhere else, the
+    // page's own order (by name).
+    function arrange(name) {
+      var order = function (a, b) { return Number(a.getAttribute("data-order")) - Number(b.getAttribute("data-order")); };
+      tiles.sort(name === "unrecognized" ? function (a, b) { return items(b) - items(a) || order(a, b); } : order);
+      var gallery = document.getElementById("people");
+      tiles.forEach(function (t) { gallery.appendChild(cell(t)); });
+    }
     function belongs(tile, name) {
       var category = tile.getAttribute("data-category");
       if (name === "all") return category !== "unrecognized";
@@ -100,6 +130,7 @@
       if (!LABELS[name]) name = "all";
       view = name;
       clear();
+      arrange(name);
       say(CHOOSING[name] && !CAIXA ? NEEDS_CAIXA : "");
       app.setAttribute("data-view", name);
       title.textContent = LABELS[name];
@@ -248,6 +279,7 @@
         tile.setAttribute("data-name", typed);
         tile.setAttribute("data-category", "");
         tile.querySelector(".name").textContent = typed;
+        renumber(tile);
         labels(cell(tile), typed);
         var form = cell(tile).querySelector(".naming");
         if (form) form.parentNode.removeChild(form);

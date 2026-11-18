@@ -117,7 +117,7 @@ section.list h2 { font-size:1.05rem; margin:1.6rem 0 .6rem; }
 </section>
 <section id="people-section" aria-label="People">
 <div class="gallery" id="people">
-{% for p in people %}<a class="tile" href="{{ p.href }}" data-category="{{ p.category }}"{% if p.named %} data-name="{{ p.title }}"{% else %} data-handles="{{ p.handles }}"{% endif %}>
+{% for p in people %}<a class="tile" href="{{ p.href }}" data-category="{{ p.category }}" data-items="{{ p.item_count }}"{% if p.named %} data-name="{{ p.title }}"{% else %} data-handles="{{ p.handles }}"{% endif %}>
 <span class="face {{ p.hue }}" aria-hidden="true">{{ p.initials }}</span><span class="name">{{ p.title }}</span><span class="meta">{{ p.count }} · {{ p.span }}</span>
 <span class="tip" role="tooltip"><strong>{{ p.title }}</strong><span class="when">{{ p.first }} to {{ p.last }}</span><ul>{% for s in p.sources %}<li><i class="s-{{ s.slug }}"></i>{{ s.name }}<b>{{ s.count }}</b></li>{% endfor %}</ul></span>
 </a>

@@ -485,6 +485,7 @@ def _card(renderer: Renderer, page: PageSpec, href: str) -> dict[str, Any]:
         "title": page.title,
         "href": href,
         "count": _plural(len(page.message_ids), "item"),
+        "item_count": len(page.message_ids),
         "span": str(first.year) if first.year == last.year else f"{first.year}–{last.year}",
         "first": f"{first:%Y-%m-%d}",
         "last": f"{last:%Y-%m-%d}",
