@@ -23,7 +23,7 @@ MESSAGE_COLUMNS = (
     "balloon_bundle_id", "expressive_send_style_id", "thread_originator_guid",
     "thread_originator_part", "date_edited", "date_retracted", "associated_message_emoji",
     "filter_action", "filter_sub_action", "attributedbody", "message_summary_info",
-    "payload_data",
+    "payload_data", "reply_to_guid",
 )  # fmt: skip
 
 

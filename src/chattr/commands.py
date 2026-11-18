@@ -45,7 +45,7 @@ from chattr.media_archive import MediaItem, archive_media
 from chattr.importing import conversation_for, import_conversations, import_messages
 from chattr.parsers.google_voice_parser import GoogleVoiceParser
 from chattr.parsers.imessage_database_parser import iMessageDatabaseParser
-from chattr.parsers.imessage_parser import ORPHAN_CHAT, IMessageParser
+from chattr.parsers.imessage_parser import NO_RECIPIENT, ORPHAN_CHAT, IMessageParser
 from chattr.parsers.mbox_parser import MboxParser
 from chattr.parsers.messenger_parser import InstagramParser, MessengerParser
 from chattr.parsers.voicemail_parser import DATABASE as VOICEMAIL_DATABASE, VoicemailParser
@@ -756,6 +756,9 @@ def _import_imessage(
         # Earlier versions put every message without a chat into one conversation, mixing
         # everyone; those messages now go back to their people, so that conversation goes.
         dropped = db.drop_conversation("iMessage", ORPHAN_CHAT)
+        if not parser.chat and not parser.limit:
+            # rebuilt whole by every full import: what it held may have found its conversation
+            dropped += db.drop_conversation("iMessage", NO_RECIPIENT)
         counts = import_conversations(db, settings, "iMessage", db_path, batches)
         db.group_handles("iMessage", parser.handle_groups)  # one person, several addresses
         unresolved = _resolve(db, resolver, "iMessage")

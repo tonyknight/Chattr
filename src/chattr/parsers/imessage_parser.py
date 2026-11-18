@@ -179,7 +179,8 @@ class IMessageParser(BaseParser):
     def _batches(
         self, reader: iMessageDatabaseParser, messages: list[Message]
     ) -> list[ConversationBatch]:
-        batches: dict[Any, ConversationBatch] = {}
+        homes: dict[int, Any] = {}  # message rowid -> where it goes
+        by_guid: dict[str, Any] = {}
         for message in messages:
             if reader.is_tapback_message(message):
                 continue  # carried as a reaction on its target
@@ -190,11 +191,54 @@ class IMessageParser(BaseParser):
                 chat = self._home(message)
                 if chat is None:
                     continue
+            homes[message.rowid] = chat
+            by_guid[message.guid] = chat
+        followed = self._follow_replies(messages, homes, by_guid)
+        batches: dict[Any, ConversationBatch] = {}
+        for message in messages:
+            chat = homes.get(message.rowid)
+            if chat is None:
+                continue
             batch = batches.get(chat)
             if batch is None:
                 batch = batches[chat] = ConversationBatch(self._conversation(reader, chat))
-            batch.records.append(self._record(reader, message))
+            record = self._record(reader, message)
+            if message.rowid in followed:
+                record.service_specific["placed_by"] = "reply_to"
+            batch.records.append(record)
         return list(batches.values())
+
+    @staticmethod
+    def _follow_replies(
+        messages: list[Message], homes: dict[int, Any], by_guid: dict[str, Any]
+    ) -> set[int]:
+        """Give a message the owner sent with no recipient recorded the conversation of the message
+        it came after (`reply_to_guid`, which Messages keeps for most messages), or of the one that
+        came after it; a run of such replies follows along. Returns the rowids so placed."""
+        nobody = ("nobody",)
+        waiting = [m for m in messages if homes.get(m.rowid) == nobody]
+        after: dict[str, list[Message]] = {}
+        for message in messages:
+            before = (message.raw or {}).get("reply_to_guid")
+            if before:
+                after.setdefault(str(before), []).append(message)
+        placed: set[int] = set()
+        changed = True
+        while changed and waiting:
+            changed = False
+            for message in list(waiting):
+                before = (message.raw or {}).get("reply_to_guid")
+                home = by_guid.get(str(before)) if before else None
+                if home is None or home == nobody:
+                    nexts = [by_guid.get(m.guid) for m in after.get(message.guid, [])]
+                    home = next((h for h in nexts if h is not None and h != nobody), None)
+                if home is None:
+                    continue
+                homes[message.rowid] = by_guid[message.guid] = home
+                placed.add(message.rowid)
+                waiting.remove(message)
+                changed = True
+        return placed
 
     def _home(self, message: Message) -> Any:
         """Where a message that is in no chat goes (its chat was deleted, or it never had one).
