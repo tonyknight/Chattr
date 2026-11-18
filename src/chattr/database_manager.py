@@ -427,6 +427,95 @@ class DatabaseManager:
         db.commit()
         return result
 
+    #: How far apart in time a Google Voice text and its forwarded copy in Messages can be.
+    FORWARD_WINDOW = 10 * 60
+
+    def drop_forwarded_copies(self, region: str = "US") -> Removed:
+        """Delete the copies Messages kept of texts Google Voice forwarded to the owner's phone.
+
+        Google Voice can forward the texts people send as ordinary SMS; Messages keeps them
+        (often in a conversation since deleted), with none of the owner's replies, which went
+        through Google Voice. A message in iMessage's database is such a copy when Google Voice
+        has one from the same number (however it is written), with the same words (spaces aside),
+        within `FORWARD_WINDOW` seconds. Google Voice's record, with both sides, stays. A
+        conversation left with nothing goes. Returns what went, with the files no other message
+        shows. Safe to repeat."""
+        db = self._db
+
+        def rows(service: str) -> list[sqlite3.Row]:
+            return db.execute(
+                "SELECT m.id, m.conversation_id, m.timestamp_utc, m.body, h.identifier "
+                "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+                "JOIN handles h ON h.id = m.sender_handle_id "
+                "WHERE c.service = ? AND m.is_from_owner = 0 AND m.body IS NOT NULL",
+                (service,),
+            ).fetchall()
+
+        def when(text: str) -> Optional[float]:
+            try:
+                moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return None
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            return moment.timestamp()
+
+        def key(row: sqlite3.Row) -> tuple[str, str]:
+            words = " ".join(str(row["body"]).split())
+            return normalize_identifier(row["identifier"], region), words
+
+        voice: dict[tuple[str, str], list[float]] = {}
+        for row in rows("Google Voice"):
+            moment = when(row["timestamp_utc"])
+            if moment is not None and key(row)[1]:
+                voice.setdefault(key(row), []).append(moment)
+        result = Removed()
+        if not voice:
+            return result
+        copies: list[str] = []
+        touched: set[str] = set()
+        for row in rows("iMessage"):
+            moment = when(row["timestamp_utc"])
+            times = voice.get(key(row))
+            if moment is None or not times:
+                continue
+            if any(abs(moment - other) <= self.FORWARD_WINDOW for other in times):
+                copies.append(row["id"])
+                touched.add(row["conversation_id"])
+        paths: set[str] = set()
+        for start in range(0, len(copies), 500):
+            chunk = copies[start : start + 500]
+            marks = ",".join("?" for _ in chunk)
+            paths |= {
+                r[0]
+                for r in db.execute(
+                    f"SELECT storage_path FROM attachments WHERE message_id IN ({marks}) "
+                    "AND storage_path IS NOT NULL",
+                    chunk,
+                )
+            }
+            db.execute(f"DELETE FROM reactions WHERE message_id IN ({marks})", chunk)
+            db.execute(f"DELETE FROM attachments WHERE message_id IN ({marks})", chunk)
+            result.messages += db.execute(
+                f"DELETE FROM messages WHERE id IN ({marks})", chunk
+            ).rowcount
+        for conversation_id in touched:
+            if not db.execute(
+                "SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1", (conversation_id,)
+            ).fetchone():
+                db.execute("DELETE FROM participants WHERE conversation_id = ?", (conversation_id,))
+                db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+                result.conversations += 1
+        db.commit()
+        result.files = sorted(
+            p
+            for p in paths
+            if not db.execute(
+                "SELECT 1 FROM attachments WHERE storage_path = ? LIMIT 1", (p,)
+            ).fetchone()
+        )
+        return result
+
     def drop_conversation(self, service: str, source_id: str) -> list[str]:
         """Delete a conversation and everything in it (it is being imported differently now).
         Returns the files (`storage_path`) that no other message shows. Safe to repeat."""
