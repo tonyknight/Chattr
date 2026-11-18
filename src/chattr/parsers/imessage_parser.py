@@ -41,8 +41,12 @@ from chattr.records import AttachmentRecord, ConversationRecord, MessageRecord, 
 SERVICE = "iMessage"
 #: Apple's placeholder for an attachment inside message text.
 OBJECT_REPLACEMENT = "￼"
-#: Messages that are not in any chat still need a home.
+#: What earlier versions called the one conversation they put every message without a chat in.
+#: A message without a chat now goes back to the person it was with (see `_batches`).
 ORPHAN_CHAT = "(no chat)"
+#: Messages the owner sent that are in no chat and name nobody: they keep a conversation apart.
+NO_RECIPIENT = "(no recipient)"
+NO_RECIPIENT_NAME = "Sent, recipient not recorded"
 
 PathLike = Union[str, Path]
 
@@ -154,26 +158,76 @@ class IMessageParser(BaseParser):
                 by_group.setdefault(group, set()).add(address)
         #: Addresses the database (or the contacts) says are one person, where there are several.
         self.handle_groups = [sorted(found) for found in by_group.values() if len(found) > 1]
+        # For messages that are in no chat: who each handle is (its group), the addresses of each,
+        # and the one-to-one conversation each person already has.
+        self._group_of = groups
+        self._addresses = {group: sorted(found) for group, found in by_group.items()}
+        rowids: dict[str, list[int]] = {}
+        for rowid, address in reader.handles.items():
+            if rowid and address:
+                rowids.setdefault(address.strip(), []).append(rowid)
+        self._one_to_one: dict[int, int] = {}
+        for rowid, one in sorted(reader.enhanced_chats.items()):
+            if one.is_group_chat:
+                continue
+            for address in (one.participants or ()) or (one.chat_identifier,):
+                for handle in rowids.get((address or "").strip(), []):
+                    self._one_to_one.setdefault(
+                        groups.get(handle, handle), self._conversation_of.get(rowid, rowid)
+                    )
 
     def _batches(
         self, reader: iMessageDatabaseParser, messages: list[Message]
     ) -> list[ConversationBatch]:
-        batches: dict[Optional[int], ConversationBatch] = {}
+        batches: dict[Any, ConversationBatch] = {}
         for message in messages:
             if reader.is_tapback_message(message):
                 continue  # carried as a reaction on its target
-            chat = message.chat_id
+            chat: Any = message.chat_id
             if chat is not None:  # a split conversation is imported as the one it is
                 chat = self._conversation_of.get(chat, chat)
+            else:
+                chat = self._home(message)
+                if chat is None:
+                    continue
             batch = batches.get(chat)
             if batch is None:
                 batch = batches[chat] = ConversationBatch(self._conversation(reader, chat))
             batch.records.append(self._record(reader, message))
         return list(batches.values())
 
-    def _conversation(
-        self, reader: iMessageDatabaseParser, chat_id: Optional[int]
-    ) -> ConversationRecord:
+    def _home(self, message: Message) -> Any:
+        """Where a message that is in no chat goes (its chat was deleted, or it never had one).
+
+        The person it was with is its handle, whoever sent it: their one-to-one conversation when
+        they have one, or else a conversation of its own with them. A message the owner sent that
+        names nobody goes with the others like it. A group's event (someone joined, the group was
+        renamed) has no group left to belong to, and goes. None: leave it out."""
+        if int(getattr(message, "item_type", 0) or 0) != 0:
+            return None
+        handle = int(message.handle_id or 0)
+        if not handle:
+            return ("nobody",) if message.is_from_me else None
+        group = self._group_of.get(handle, handle)
+        return self._one_to_one.get(group, ("person", group, handle))
+
+    def _conversation(self, reader: iMessageDatabaseParser, chat_id: Any) -> ConversationRecord:
+        if chat_id == ("nobody",):  # not a person: listed with the group conversations
+            return ConversationRecord(
+                service=SERVICE, source_id=NO_RECIPIENT, type="group", name=NO_RECIPIENT_NAME
+            )
+        if isinstance(
+            chat_id, tuple
+        ):  # ("person", group, handle): someone with no chat of their own
+            _, group, handle = chat_id
+            addresses = self._addresses.get(group) or [reader.handles.get(handle) or str(handle)]
+            return ConversationRecord(
+                service=SERVICE,
+                source_id=f"no-chat:{addresses[0]}",
+                name=self._handle_name(reader, handle) or addresses[0],
+                participants=(addresses[0],),
+                service_specific={"no_chat": True},
+            )
         chat = reader.enhanced_chats.get(chat_id) if chat_id is not None else None
         if chat is None:
             return ConversationRecord(service=SERVICE, source_id=ORPHAN_CHAT, name=ORPHAN_CHAT)

@@ -427,6 +427,38 @@ class DatabaseManager:
         db.commit()
         return result
 
+    def drop_conversation(self, service: str, source_id: str) -> list[str]:
+        """Delete a conversation and everything in it (it is being imported differently now).
+        Returns the files (`storage_path`) that no other message shows. Safe to repeat."""
+        db = self._db
+        found = db.execute(
+            "SELECT id FROM conversations WHERE service = ? AND source_id = ?", (service, source_id)
+        ).fetchall()
+        paths: set[str] = set()
+        for (conversation_id,) in found:
+            ids = "SELECT id FROM messages WHERE conversation_id = ?"
+            paths |= {
+                r[0]
+                for r in db.execute(
+                    f"SELECT storage_path FROM attachments WHERE message_id IN ({ids}) "
+                    "AND storage_path IS NOT NULL",
+                    (conversation_id,),
+                )
+            }
+            db.execute(f"DELETE FROM reactions WHERE message_id IN ({ids})", (conversation_id,))
+            db.execute(f"DELETE FROM attachments WHERE message_id IN ({ids})", (conversation_id,))
+            db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            db.execute("DELETE FROM participants WHERE conversation_id = ?", (conversation_id,))
+            db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        db.commit()
+        return sorted(
+            p
+            for p in paths
+            if not db.execute(
+                "SELECT 1 FROM attachments WHERE storage_path = ? LIMIT 1", (p,)
+            ).fetchone()
+        )
+
     def tidy_groups(self) -> GroupTidy:
         """Apply the rules for group conversations, from any source:
 
